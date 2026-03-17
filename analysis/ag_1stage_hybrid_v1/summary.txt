@@ -1,0 +1,9 @@
+MAE(all): 0.121885
+RMSE: 0.235959
+MAE(fast<= 0.1 ms): 0.000930
+MAE(slow> 0.1 ms): 0.160738
+Fast precision@0.1: 1.000000
+Fast recall@0.1: 0.542416
+Pred fast count: 211
+True fast count: 389
+False fast count: 0

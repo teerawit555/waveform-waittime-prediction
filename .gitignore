@@ -1,0 +1,10 @@
+# Python virtual environments
+
+# Ignore huge data files
+data/*.csv
+data/processed/*.csv
+data/processed/prediction/*.csv
+
+AutogluonModels/
+venv311/
+__pycache__/

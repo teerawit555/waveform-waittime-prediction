@@ -1,0 +1,32 @@
+=== Feature Importance Summary ===
+
+Input file: AutogluonModels/ag_1stage_hybrid_v1/feature_importance_20260315_142424.csv
+Total features analyzed: 92
+Top-N analyzed: 30
+
+Top-10 features:
+01. num_big_slopes_after_half | importance=0.156548 | group=late_settle
+02. last_big_slope_time_ms | importance=0.101027 | group=late_settle
+03. tcn_embed_43 | importance=0.094830 | group=tcn_embedding
+04. tcn_embed_28 | importance=0.033244 | group=tcn_embedding
+05. tcn_embed_39 | importance=0.029103 | group=tcn_embedding
+06. tcn_embed_11 | importance=0.026292 | group=tcn_embedding
+07. tcn_embed_46 | importance=0.024177 | group=tcn_embedding
+08. num_mean_shifts | importance=0.022970 | group=late_settle
+09. tcn_embed_08 | importance=0.014703 | group=tcn_embedding
+10. tcn_embed_48 | importance=0.010195 | group=tcn_embedding
+
+--- Group summary ---
+tcn_embedding: summed_importance=0.317024
+late_settle: summed_importance=0.294802
+handcrafted_other: summed_importance=0.020710
+
+--- Count in Top-30 ---
+tcn_embedding: count=24
+late_settle: count=5
+handcrafted_other: count=1
+
+--- Interpretation ---
+Late-settle features appear in Top-10 (3 features), suggesting the model is using delayed-transition / settling behavior.
+TCN embeddings appear in Top-10 (7 features), suggesting learned waveform representations are contributing strongly.
+Both late-settle handcrafted features and TCN embeddings are active in Top-20. This usually means the hybrid approach is working as intended.
