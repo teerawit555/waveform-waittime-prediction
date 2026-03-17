@@ -12,6 +12,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
+import matplotlib.pyplot as plt
+
 
 # small constant for numerical stability
 EPS = 1e-12
@@ -311,6 +313,40 @@ def eval_one_epoch(model, loader, criterion, device: str) -> float:
 
     return total / max(count, 1)
 
+def plot_training_curve(history, out_dir: str) -> None:
+    """
+    Plot training vs validation loss and save figure.
+    """
+
+    epochs = [h["epoch"] for h in history]
+    train_loss = [h["train_loss"] for h in history]
+    valid_loss = [h["valid_loss"] for h in history]
+
+    best_epoch = epochs[valid_loss.index(min(valid_loss))]
+
+    plt.figure(figsize=(8,5))
+
+    plt.plot(epochs, train_loss, marker="o", label="Train Loss")
+    plt.plot(epochs, valid_loss, marker="o", label="Validation Loss")
+
+    plt.axvline(best_epoch, linestyle="--", label=f"Best Epoch ({best_epoch})")
+
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Training vs Validation Loss")
+
+    plt.legend()
+    plt.grid(True)
+
+    plt.tight_layout()
+
+    save_path = os.path.join(out_dir, "learning_curve.png")
+    plt.savefig(save_path, dpi=300)
+
+    plt.close()
+
+    print(f"Saved learning curve to {save_path}")
+
 
 def main() -> None:
 
@@ -457,6 +493,9 @@ def main() -> None:
     # save training history
     with open(os.path.join(args.out, "train_history.json"), "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
+
+    # plot learning curve
+    plot_training_curve(history, args.out)
 
     # save config
     with open(os.path.join(args.out, "config.json"), "w", encoding="utf-8") as f:
