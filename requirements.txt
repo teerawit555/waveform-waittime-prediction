@@ -3,3 +3,5 @@ pandas
 scipy
 matplotlib
 autogluon
+flask 
+flask-cors

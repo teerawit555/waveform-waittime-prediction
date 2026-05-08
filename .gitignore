@@ -8,3 +8,44 @@ data/processed/prediction/*.csv
 AutogluonModels/
 venv311/
 __pycache__/
+
+# frontend
+node_modules/
+webapp/frontend/node_modules/
+dist/
+build/
+
+# backend generated files
+webapp/backend/app/uploads/
+webapp/backend/app/plots/
+webapp/backend/app/results/
+webapp/backend/app/jobs.db
+
+# generated data/models
+data/processed/
+data/raw/
+models/
+*.npz
+*.csv
+*.pt
+*.pth
+*.pkl
+*.joblib
+
+# python
+venv/
+venv311/
+__pycache__/
+*.pyc
+
+# env
+.env
+.env.*
+!.env.example
+
+analysis/
+data/processed/
+models/
+*.npz
+*.pt
+*.pth

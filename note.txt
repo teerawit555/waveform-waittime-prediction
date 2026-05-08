@@ -1,14 +1,27 @@
-Train
+Train (in used)
 
 python scripts/extract_features.py --mode train --in data/data_for_train_m_n.csv --out data/processed/train_features.csv
+
+--------------------------------------------------------
+-- (not used) version train/valid (80/20) no test (not used)
+python scripts/split_csv_train_test.py === split train (80) test (20)
 python scripts/make_wave_tensor.py --in data/data_for_train_m_n.csv --out data/processed/train_wave_tensor.npz --target-len 1000 --label-col wait_time_ms
+
+-- version Train/Test (not used)
+python scripts/make_wave_tensor.py --in data/train_split.csv --out data/processed/train_wave_tensor_split.npz --target-len 1000 --label-col wait_time_ms
+python scripts/make_wave_tensor.py --in data/test_split.csv --out data/processed/test_wave_tensor_split.npz --target-len 1000 --label-col wait_time_ms
+--------------------------------------------------------
+-- version Train/Valid (in used)
 python scripts/train_tcn_encoder.py --waves data/processed/train_wave_tensor.npz --out models/tcn_v1 --epochs 30 --batch-size 64 --lr 0.001 --embedding-dim 64 --log-target
+-- version Train/Test (not used)
+python scripts/train_tcn_encoder.py --waves data/processed/train_wave_tensor_split.npz --test-waves data/processed/test_wave_tensor_split.npz --out models/tcn_v2_train_test --log-target
+--------------------------------------------------------
 python scripts/export_tcn_encoder.py --model models/tcn_v1 --waves data/processed/train_wave_tensor.npz --out data/processed/train_tcn_embed.csv
 python scripts/merge_features_and_embeddings.py --features data/processed/train_features.csv --embeddings data/processed/train_tcn_embed.csv --out data/processed/train_hybrid.csv
 python scripts/train_ag_1stage.py --data data/processed/train_hybrid.csv --label wait_time_ms --model-dir AutogluonModels/ag_1stage_hybrid_v1 --time-limit 300 --log-target
 
-
-Predict
+==================================================
+Predict (in uesd)
 
 python scripts/extract_features.py --mode pred --in data/data_for_pred.csv --out data/processed/infer_features.csv
 python scripts/make_wave_tensor.py --in data/data_for_pred.csv --out data/processed/infer_wave_tensor.npz --target-len 1000
