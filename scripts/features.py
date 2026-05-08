@@ -66,12 +66,19 @@ def main() -> None:
     topn.to_csv(outdir / f"top_{args.topn}_feature_importance.csv", index=False)
 
     # ---------- Plot 1: top-N barh ----------
-    plt.figure(figsize=(10, max(6, args.topn * 0.32)))
-    plt.barh(topn["feature"][::-1], topn["importance"][::-1])
+    H = max(6, args.topn * 0.32)
+    plt.figure(figsize=(10, H))
+    bars = plt.barh(topn["feature"][::-1], topn["importance"][::-1])
     plt.xlabel("Importance")
     plt.title(f"Top-{args.topn} Feature Importance")
+
+    for bar in bars:
+        width = bar.get_width()
+        y = bar.get_y() + bar.get_height() / 2
+        plt.text(width, y, f" {width:.4f}", va="center", ha="left", fontsize=8)
+
     plt.tight_layout()
-    plt.savefig(outdir / f"top_{args.topn}_feature_importance.png", dpi=180)
+    plt.savefig(outdir / f"top_{args.topn}_feature_importance.png", dpi=180, bbox_inches="tight")
     plt.close()
 
     # ---------- Plot 2: group contribution (sum of importance) ----------
@@ -82,12 +89,24 @@ def main() -> None:
     )
     grp_sum.to_csv(outdir / "feature_group_importance_sum.csv", index=False)
 
-    plt.figure(figsize=(7, 5))
-    plt.bar(grp_sum["group"], grp_sum["importance"])
+    plt.figure(figsize=(10, H))
+    bars = plt.bar(grp_sum["group"], grp_sum["importance"])
     plt.ylabel("Summed Importance")
     plt.title("Feature Group Importance (Sum)")
+
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            height,
+            f"{height:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=9
+        )
+    plt.xticks(rotation=15)
     plt.tight_layout()
-    plt.savefig(outdir / "feature_group_importance_sum.png", dpi=180)
+    plt.savefig(outdir / "feature_group_importance_sum.png", dpi=180, bbox_inches="tight")
     plt.close()
 
     # ---------- Plot 3: group count in top-N ----------
@@ -99,12 +118,24 @@ def main() -> None:
     )
     grp_topn.to_csv(outdir / f"feature_group_top_{args.topn}_count.csv", index=False)
 
-    plt.figure(figsize=(7, 5))
-    plt.bar(grp_topn["group"], grp_topn["count"])
+    plt.figure(figsize=(10, H))
+    bars = plt.bar(grp_topn["group"], grp_topn["count"])
     plt.ylabel("Count")
     plt.title(f"Feature Group Count in Top-{args.topn}")
+
+    for bar in bars:
+        height = bar.get_height()
+        plt.text(
+            bar.get_x() + bar.get_width() / 2,
+            height,
+            f"{int(height)}",
+            ha="center",
+            va="bottom",
+            fontsize=9
+        )
+    plt.xticks(rotation=15)
     plt.tight_layout()
-    plt.savefig(outdir / f"feature_group_top_{args.topn}_count.png", dpi=180)
+    plt.savefig(outdir / f"feature_group_top_{args.topn}_count.png", dpi=180, bbox_inches="tight")
     plt.close()
 
     # ---------- Summary text ----------
@@ -184,7 +215,7 @@ def main() -> None:
                 "Review feature engineering and model setup.\n"
             )
 
-    print(f"✅ Saved feature analysis to: {outdir}")
+    print(f"Saved feature analysis to: {outdir}")
     print(f"Top-{args.topn} plot: {outdir / f'top_{args.topn}_feature_importance.png'}")
     print(f"Summary: {outdir / 'feature_summary.txt'}")
 

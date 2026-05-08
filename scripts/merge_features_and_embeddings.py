@@ -22,7 +22,7 @@ def main() -> None:
     out = feat.merge(emb, on="wave_id", how="inner", validate="one_to_one")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)
-    print(f"✅ Saved {args.out} | rows={len(out)} cols={len(out.columns)}")
+    print(f"Saved {args.out} | rows={len(out)} cols={len(out.columns)}")
 
 
 if __name__ == "__main__":

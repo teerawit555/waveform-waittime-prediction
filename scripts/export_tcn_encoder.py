@@ -112,7 +112,7 @@ def main() -> None:
     out = pd.DataFrame(E, columns=cols)
     out.insert(0, "wave_id", wave_id)
     out.to_csv(args.out, index=False)
-    print(f"✅ Saved {args.out} | rows={len(out)} cols={len(out.columns)}")
+    print(f"Saved {args.out} | rows={len(out)} cols={len(out.columns)}")
 
 
 if __name__ == "__main__":

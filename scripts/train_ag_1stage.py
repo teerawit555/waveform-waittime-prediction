@@ -93,7 +93,7 @@ def main() -> None:
 
     ap.add_argument("--data", required=True)         # input CSV file
     ap.add_argument("--label", default="wait_time_ms")  # regression target
-
+    ap.add_argument("--model-name", default=None)  # ADD
     ap.add_argument("--model-dir", default=None)     # directory to save models
     ap.add_argument("--time-limit", type=int, default=300)  # training time limit (seconds)
 
@@ -240,7 +240,9 @@ def main() -> None:
             include_confidence_band=True,
         )
 
-        fi_path = os.path.join(save_path, f"feature_importance_{ts}.csv")
+        model_suffix = args.model_name or ts  # ← ถ้าไม่มี model_name fallback ใช้ ts
+
+        fi_path = os.path.join(save_path, f"feature_importance_{model_suffix}.csv")
 
         fi.to_csv(fi_path, index=True)
 
@@ -288,11 +290,11 @@ def main() -> None:
     )
 
     pred_out.to_csv(
-        os.path.join(save_path, f"test_predictions_{ts}.csv"),
+        os.path.join(save_path, f"test_predictions_{model_suffix}.csv"),
         index=False
     )
 
-    log(f"✅ Saved model at {save_path}", log_path)
+    log(f"Saved model at {save_path}", log_path)
 
 
 if __name__ == "__main__":

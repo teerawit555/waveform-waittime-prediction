@@ -225,7 +225,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device: str) -> float:
     total = 0.0
     count = 0
 
-    for xb, yb in loader:
+    for xb, yb , _  in loader:
 
         xb = xb.to(device)
         yb = yb.to(device)
@@ -245,38 +245,33 @@ def train_one_epoch(model, loader, optimizer, criterion, device: str) -> float:
 
     return total / max(count, 1)
 
-# ADD : print predict wait time from Test and cal MAE,RMSE 
-def eval_one_epoch(model, loader, criterion, device: str) -> float:
+
+def eval_one_epoch(model, loader, criterion, epoch: int, device: str) -> float:
     """
     Evaluate model on validation set.
     """
+
     model.eval()
 
     total = 0.0
     count = 0
 
-    all_pred = []
-    all_true = []
-    wave_ids = []   # เพิ่มตรงนี้
-
     with torch.no_grad():
-        for i, (xb, yb,wid) in enumerate(loader):
+        for i, (xb, yb, _) in enumerate(loader):  # รับ 3 ค่า
 
             xb = xb.to(device)
             yb = yb.to(device)
 
             pred, _ = model(xb)
 
+            # แปลงกลับเป็นค่า real (ถ้าใช้ log target)
             pred_real = torch.expm1(pred)
             true_real = torch.expm1(yb)
 
-            error = pred_real - true_real
-
-            # print แค่ batch แรก
-            if i == 0:
-                print("pred:", pred_real[:5].cpu().numpy())
-                print("true:", true_real[:5].cpu().numpy())
-                print("error:", error[:5].cpu().numpy())
+            # print แค่ครั้งเดียว (กัน log ระเบิด)
+            if i == 0 and epoch == 1:
+                print("pred:", pred_real[:10].cpu().numpy())
+                print("true:", true_real[:10].cpu().numpy())
                 print("-----")
 
             loss = criterion(pred, yb)
@@ -284,35 +279,10 @@ def eval_one_epoch(model, loader, criterion, device: str) -> float:
             total += float(loss.item()) * len(xb)
             count += len(xb)
 
-            all_pred.append(pred_real.cpu())
-            all_true.append(true_real.cpu())
-            wave_ids.append(wid.cpu())
-
-    pred_all = torch.cat(all_pred)
-    true_all = torch.cat(all_true)
-    wave_ids = torch.cat(wave_ids)
-
-    mae = torch.mean(torch.abs(pred_all - true_all))
-    rmse = torch.sqrt(torch.mean((pred_all - true_all)**2))
-    error_all = pred_all - true_all
-
-    print(f"Validation MAE: {mae.item():.6f}")
-    print(f"Validation RMSE: {rmse.item():.6f}")
-
-    # save csv
-    df = pd.DataFrame({
-        "wave_id": wave_ids.numpy(),
-        "true_wait_time": true_all.numpy(),
-        "pred_wait_time": pred_all.numpy(),
-        "error": error_all.numpy()
-    })
-
-    df.to_csv("validation_predictions.csv", index=False)
-
-    print("Saved validation_predictions.csv")
-
     return total / max(count, 1)
 
+
+# ADD : print predict wait time from Test and cal MAE,RMSE 
 def plot_training_curve(history, out_dir: str) -> None:
     """
     Plot training vs validation loss and save figure.
@@ -348,6 +318,53 @@ def plot_training_curve(history, out_dir: str) -> None:
     print(f"Saved learning curve to {save_path}")
 
 
+# Prediction
+def predict(model, loader, device, out_dir, name="test"):
+    model.eval()
+
+    all_pred = []
+    all_true = []
+    wave_ids = []
+
+    with torch.no_grad():
+        for xb, yb, wid in loader:
+            xb = xb.to(device)
+            yb = yb.to(device)
+
+            pred, _ = model(xb)
+
+            pred_real = torch.expm1(pred)
+            true_real = torch.expm1(yb)
+
+            all_pred.append(pred_real.cpu())
+            all_true.append(true_real.cpu())
+            wave_ids.append(wid.cpu())
+
+    pred_all = torch.cat(all_pred)
+    true_all = torch.cat(all_true)
+    wave_ids = torch.cat(wave_ids)
+
+    mae = torch.mean(torch.abs(pred_all - true_all))
+    rmse = torch.sqrt(torch.mean((pred_all - true_all)**2))
+
+    print(f"[{name}] MAE: {mae.item():.6f}")
+    print(f"[{name}] RMSE: {rmse.item():.6f}")
+
+    df = pd.DataFrame({
+        "wave_id": wave_ids.numpy(),
+        "true_wait_time": true_all.numpy(),
+        "pred_wait_time": pred_all.numpy(),
+        "error": (pred_all - true_all).numpy()
+    })
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    save_path = os.path.join(out_dir, f"{name}_predictions.csv")
+    df.to_csv(save_path, index=False)
+
+    print(f"Saved {save_path}") 
+
+
 def main() -> None:
 
     # command line arguments
@@ -359,6 +376,9 @@ def main() -> None:
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--batch-size", type=int, default=64)
     ap.add_argument("--lr", type=float, default=1e-3)
+
+    # Prediction
+    # ap.add_argument("--test-waves", required=True)
 
     ap.add_argument("--embedding-dim", type=int, default=64)
 
@@ -425,7 +445,20 @@ def main() -> None:
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=False)
 
-    device = args.device
+    # ===== TEST LOADER =====
+    # d_test = np.load(args.test_waves)
+
+    # X_test = d_test["X"].astype(np.float32)
+    # y_test = d_test["y"].astype(np.float32)
+    # wave_id_test = d_test["wave_id"].astype(np.int64)
+
+    # if args.log_target:
+    #     y_test = np.log1p(np.clip(y_test, 0.0, None))
+
+    # test_ds = WaveDataset(X_test, y_test, wave_id_test)
+    # test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
+
+    device = torch.device(args.device)
 
     # create model
     model = TCNRegressor(
@@ -461,6 +494,7 @@ def main() -> None:
             model,
             valid_loader,
             criterion,
+            epoch,
             device
         )
 
@@ -479,6 +513,11 @@ def main() -> None:
 
     if best_state is None:
         raise RuntimeError("No best model state captured")
+
+    model.load_state_dict(best_state)
+
+    # === RUN TEST PREDICTION ===
+    #predict(model, test_loader, device, args.out, name="test")
 
     # save model checkpoint
     ckpt = {

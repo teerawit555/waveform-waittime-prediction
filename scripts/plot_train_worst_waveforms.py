@@ -65,7 +65,7 @@ def main() -> None:
         plt.close()
         count += 1
 
-    print(f"✅ Saved {count} waveform plots to: {outdir}")
+    print(f"Saved {count} waveform plots to: {outdir}")
 
 
 if __name__ == "__main__":

@@ -64,7 +64,7 @@ def main() -> None:
     print("[5/5] saving output...")
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     out.to_csv(args.out, index=False)
-    print(f"✅ Saved {args.out} | rows={len(out)}")
+    print(f"Saved {args.out} | rows={len(out)}")
 
 
 if __name__ == "__main__":

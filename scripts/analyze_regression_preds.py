@@ -21,10 +21,11 @@ def main() -> None:
 
     df = pd.read_csv(args.input_csv)
 
-    required = ["wait_time_ms", "pred_wait_time_ms"]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise KeyError(f"Missing required columns: {missing}")
+    if "wait_time_ms" not in df.columns:
+        df["wait_time_ms"] = df["true_wait_time"]
+
+    if "pred_wait_time_ms" not in df.columns:
+        df["pred_wait_time_ms"] = df["pred_wait_time"]
 
     y_true = df["wait_time_ms"].to_numpy(dtype=float)
     y_pred = df["pred_wait_time_ms"].to_numpy(dtype=float)
@@ -64,7 +65,7 @@ def main() -> None:
         f.write(f"False fast count: {fp}\n")
 
     # 1) true vs pred scatter
-    plt.figure(figsize=(6, 6))
+    plt.figure(figsize=(8, 5))
     plt.scatter(y_true, y_pred, s=10, alpha=0.6)
     lim_max = float(max(np.max(y_true), np.max(y_pred)))
     plt.plot([0, lim_max], [0, lim_max], linestyle="--")
@@ -76,7 +77,7 @@ def main() -> None:
     plt.close()
 
     # 2) residual plot
-    plt.figure(figsize=(7, 5))
+    plt.figure(figsize=(8, 5))
     plt.scatter(y_true, df["error"], s=10, alpha=0.6)
     plt.axhline(0.0, linestyle="--")
     plt.xlabel("True wait_time_ms")
@@ -87,7 +88,7 @@ def main() -> None:
     plt.close()
 
     # 3) abs error histogram
-    plt.figure(figsize=(7, 5))
+    plt.figure(figsize=(8, 5))
     plt.hist(df["abs_error"], bins=50)
     plt.xlabel("Absolute Error (ms)")
     plt.ylabel("Count")
@@ -97,7 +98,7 @@ def main() -> None:
     plt.close()
 
     # 4) true/pred histogram overlay
-    plt.figure(figsize=(7, 5))
+    plt.figure(figsize=(8, 5))
     plt.hist(y_true, bins=50, alpha=0.6, label="True")
     plt.hist(y_pred, bins=50, alpha=0.6, label="Pred")
     plt.xlabel("wait_time_ms")
@@ -118,7 +119,7 @@ def main() -> None:
     worst = df.sort_values(sort_cols, ascending=False).head(args.topk)[cols]
     worst.to_csv(outdir / "worst_cases.csv", index=False)
 
-    print(f"✅ Saved analysis to: {outdir}")
+    print(f"Saved analysis to: {outdir}")
     print(f"MAE(all)={mae:.6f} | RMSE={rmse:.6f}")
     print(f"MAE(fast)={mae_fast:.6f} | MAE(slow)={mae_slow:.6f}")
     print(f"Fast precision={fast_precision:.6f} | Fast recall={fast_recall:.6f} | False fast={fp}")

@@ -233,7 +233,7 @@ def main() -> None:
         y=y_arr,
     )
 
-    print(f"✅ Saved {out_path} | X={X.shape} | labeled={np.isfinite(y_arr).sum()}")
+    print(f"Saved {out_path} | X={X.shape} | labeled={np.isfinite(y_arr).sum()}")
 
 
 if __name__ == "__main__":

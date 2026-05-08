@@ -719,7 +719,7 @@ def main() -> None:
         out = out.drop(columns=["wait_time_ms"], errors="ignore")
 
     out.to_csv(out_path, index=False)
-    print(f"✅ Saved: {out_path} | rows={len(out)} cols={len(out.columns)}")
+    print(f"Saved: {out_path} | rows={len(out)} cols={len(out.columns)}")
 
 
 if __name__ == "__main__":
