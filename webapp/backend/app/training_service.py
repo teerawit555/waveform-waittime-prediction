@@ -1,20 +1,67 @@
 from __future__ import annotations
 
 import subprocess
-import threading
 import uuid
 import sys
 import pandas as pd
 import json
 
 from pathlib import Path
-from .config import ANALYSIS_DIR, PLOTS_DIR, DATA_DIR, MODELS_DIR, TCN_DIR, AUTOGLUON_DIR, RESULTS_DIR, SCRIPTS_DIR
+from .config import (
+    ANALYSIS_DIR,
+    AUTOGLUON_DIR,
+    DATA_DIR,
+    DEFAULT_MODEL_NAME,
+    DEFAULT_AG_PRESETS,
+    DEFAULT_AG_TIME_LIMIT,
+    DEFAULT_TCN_AUGMENT,
+    DEFAULT_TCN_EPOCHS,
+    DEFAULT_TCN_EARLY_STOPPING_PATIENCE,
+    DEFAULT_TCN_FAST_WEIGHT,
+    DEFAULT_TCN_NOISE_STD,
+    DEFAULT_TCN_SCALE_JITTER,
+    DEFAULT_TCN_TIME_SHIFT,
+    MODELS_DIR,
+    PLOTS_DIR,
+    RESULTS_DIR,
+    SCRIPT_ANALYSIS_DIR,
+    SCRIPT_AUTOGLUON_DIR,
+    SCRIPT_DATA_DIR,
+    SCRIPT_FEATURES_DIR,
+    SCRIPT_TCN_DIR,
+    TCN_DIR,
+)
 from .job_store import job_store
+from .job_queue import job_queue
+from .mlflow_service import (
+    begin_training_run,
+    log_artifacts as mlflow_log_artifacts,
+    log_metrics as mlflow_log_metrics,
+    log_model_dirs_enabled,
+    log_params as mlflow_log_params,
+    register_model_version as mlflow_register_model_version,
+    set_tags as mlflow_set_tags,
+)
 
 
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
+
+SCRIPT_PATHS = {
+    "analyze_regression_preds": SCRIPT_ANALYSIS_DIR / "analyze_regression_preds.py",
+    "convert_signal_csv": SCRIPT_DATA_DIR / "convert_signal_csv.py",
+    "features": SCRIPT_ANALYSIS_DIR / "features.py",
+    "plot_pred_on_waveforms": SCRIPT_ANALYSIS_DIR / "plot_pred_on_waveforms.py",
+    "split_csv_train_test": SCRIPT_DATA_DIR / "split_csv_train_test.py",
+    "make_wave_tensor": SCRIPT_DATA_DIR / "make_wave_tensor.py",
+    "extract_features": SCRIPT_FEATURES_DIR / "extract_features.py",
+    "merge_features_and_embeddings": SCRIPT_FEATURES_DIR / "merge_features_and_embeddings.py",
+    "predict_ag_1stage": SCRIPT_AUTOGLUON_DIR / "predict_ag_1stage.py",
+    "train_ag_1stage": SCRIPT_AUTOGLUON_DIR / "train_ag_1stage.py",
+    "export_tcn_encoder": SCRIPT_TCN_DIR / "export_tcn_encoder.py",
+    "train_tcn_encoder": SCRIPT_TCN_DIR / "train_tcn_encoder.py",
+}
 
 def run_cmd(cmd: list[str]):
     """รัน subprocess command แล้วคืนค่า stdout; raise CalledProcessError ถ้าล้มเหลว"""
@@ -273,6 +320,159 @@ def analyze_overfitting(history_path: Path) -> dict:
     }
 
 
+def load_tcn_history(history_path: Path) -> list[dict]:
+    if not history_path.exists():
+        return []
+    try:
+        raw_history = json.loads(history_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    if isinstance(raw_history, list):
+        return [
+            {
+                "epoch": int(item.get("epoch", index + 1)),
+                "train_loss": float(item.get("train_loss", 0)),
+                "val_loss": float(item.get("val_loss", item.get("valid_loss", 0))),
+            }
+            for index, item in enumerate(raw_history)
+            if isinstance(item, dict)
+        ]
+
+    if isinstance(raw_history, dict):
+        train_loss = raw_history.get("train_loss") or []
+        val_loss = raw_history.get("val_loss") or raw_history.get("valid_loss") or []
+        if isinstance(train_loss, list):
+            return [
+                {
+                    "epoch": index + 1,
+                    "train_loss": float(value or 0),
+                    "val_loss": float((val_loss[index] if index < len(val_loss) else 0) or 0),
+                }
+                for index, value in enumerate(train_loss)
+            ]
+
+    return []
+
+
+def build_histogram(values: list[float], bins: int = 36, min_value: float | None = None, max_value: float | None = None) -> list[dict]:
+    clean = [float(value) for value in values if pd.notna(value)]
+    if not clean:
+        return []
+
+    low = float(min_value if min_value is not None else min(clean))
+    high = float(max_value if max_value is not None else max(clean))
+    if high <= low:
+        high = low + 1.0
+
+    width = (high - low) / bins
+    counts = [0 for _ in range(bins)]
+    for value in clean:
+        index = int((value - low) / width)
+        index = max(0, min(bins - 1, index))
+        counts[index] += 1
+
+    return [
+        {
+            "bin": round(low + width * (index + 0.5), 6),
+            "range_start": round(low + width * index, 6),
+            "range_end": round(low + width * (index + 1), 6),
+            "count": count,
+        }
+        for index, count in enumerate(counts)
+    ]
+
+
+def build_distribution_overlay(y_true: list[float], y_pred: list[float], bins: int = 36) -> list[dict]:
+    combined = [float(value) for value in [*y_true, *y_pred] if pd.notna(value)]
+    if not combined:
+        return []
+
+    low = min(combined)
+    high = max(combined)
+    true_hist = build_histogram(y_true, bins=bins, min_value=low, max_value=high)
+    pred_hist = build_histogram(y_pred, bins=bins, min_value=low, max_value=high)
+
+    return [
+        {
+            "bin": item["bin"],
+            "true": item["count"],
+            "pred": pred_hist[index]["count"] if index < len(pred_hist) else 0,
+        }
+        for index, item in enumerate(true_hist)
+    ]
+
+
+def load_ag_evaluation_data(ag_model_dir: Path, max_points: int = 700) -> dict:
+    candidates = sorted(
+        [*ag_model_dir.glob("test_predictions_*.csv"), *ag_model_dir.glob("valid_predictions_*.csv")],
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return {}
+
+    pred_csv = candidates[0]
+    df = pd.read_csv(pred_csv)
+    true_col = "wait_time_ms" if "wait_time_ms" in df.columns else "true_wait_time"
+    pred_col = "pred_wait_time_ms" if "pred_wait_time_ms" in df.columns else "pred_wait_time"
+    if true_col not in df.columns or pred_col not in df.columns:
+        return {}
+
+    df = df.copy()
+    df["wait_time_ms"] = pd.to_numeric(df[true_col], errors="coerce")
+    df["pred_wait_time_ms"] = pd.to_numeric(df[pred_col], errors="coerce")
+    df = df.dropna(subset=["wait_time_ms", "pred_wait_time_ms"])
+    if df.empty:
+        return {}
+
+    df["error"] = df["pred_wait_time_ms"] - df["wait_time_ms"]
+    df["abs_error"] = df["error"].abs()
+
+    if len(df) > max_points:
+        sample_df = df.iloc[:: max(1, len(df) // max_points)].head(max_points)
+    else:
+        sample_df = df
+
+    point_cols = ["wait_time_ms", "pred_wait_time_ms", "error", "abs_error"]
+    if "wave_id" in sample_df.columns:
+        point_cols.insert(0, "wave_id")
+
+    points = []
+    for row in sample_df[point_cols].to_dict(orient="records"):
+        points.append({
+            "wave_id": row.get("wave_id"),
+            "true": round(float(row["wait_time_ms"]), 6),
+            "pred": round(float(row["pred_wait_time_ms"]), 6),
+            "error": round(float(row["error"]), 6),
+            "abs_error": round(float(row["abs_error"]), 6),
+        })
+
+    worst_cols = point_cols
+    worst_cases = []
+    for row in df.sort_values("abs_error", ascending=False).head(8)[worst_cols].to_dict(orient="records"):
+        worst_cases.append({
+            "wave_id": row.get("wave_id"),
+            "true": round(float(row["wait_time_ms"]), 6),
+            "pred": round(float(row["pred_wait_time_ms"]), 6),
+            "error": round(float(row["error"]), 6),
+            "abs_error": round(float(row["abs_error"]), 6),
+        })
+
+    true_values = df["wait_time_ms"].tolist()
+    pred_values = df["pred_wait_time_ms"].tolist()
+    abs_errors = df["abs_error"].tolist()
+
+    return {
+        "source_csv": pred_csv.name,
+        "total_points": int(len(df)),
+        "sample_points": points,
+        "abs_error_hist": build_histogram(abs_errors),
+        "distribution": build_distribution_overlay(true_values, pred_values),
+        "worst_cases": worst_cases,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Training Service
 # ---------------------------------------------------------------------------
@@ -300,13 +500,7 @@ class TrainingService:
         """
         job_id = str(uuid.uuid4())
         job_store.create(job_id, "train")
-
-        thread = threading.Thread(
-            target=TrainingService._run_training,
-            args=(job_id, payload),
-            daemon=True,
-        )
-        thread.start()
+        job_queue.submit(job_id, "train", TrainingService._run_training, payload)
         return job_id
 
     @staticmethod
@@ -316,49 +510,44 @@ class TrainingService:
         อัปเดต progress ผ่าน job_store ในแต่ละขั้นตอน
         ถ้าล้มเหลวจะ catch error แล้ว set status = "failed"
         """
+        mlflow_session = None
         try:
-            job_store.update(job_id, status="running", progress=5, message="Start training pipeline")
+            job_store.update(job_id, status="running", progress=5, message="Starting clean split pipeline")
 
-            dataset_path = Path(payload["dataset_path"])
-
-            # ดึง hyperparameter จาก payload (มี default value)
-            epochs        = payload.get("epochs", 30)
-            batch_size    = payload.get("batch_size", 64)
-            lr            = payload.get("lr", 0.001)
-            embedding_dim = payload.get("embedding_dim", 64)
-            fast_ms       = payload.get("fast_ms", 0.1)
+            split_dir_raw = (payload.get("split_dir") or "").strip()
+            use_existing_split = bool(split_dir_raw)
+            dataset_path = Path(payload["dataset_path"]) if not use_existing_split else None
+            epochs        = int(payload.get("epochs", DEFAULT_TCN_EPOCHS))
+            batch_size    = int(payload.get("batch_size", 64))
+            lr            = float(payload.get("lr", 0.001))
+            embedding_dim = int(payload.get("embedding_dim", 64))
+            fast_ms       = float(payload.get("fast_ms", 0.1))
             target_col    = payload.get("target_col", "wait_time_ms")
+            time_limit    = int(payload.get("time_limit", DEFAULT_AG_TIME_LIMIT))
+            ag_presets    = str(payload.get("ag_presets", DEFAULT_AG_PRESETS))
+            tcn_augment   = bool(payload.get("tcn_augment", DEFAULT_TCN_AUGMENT))
+            tcn_noise_std = float(payload.get("tcn_noise_std", DEFAULT_TCN_NOISE_STD))
+            tcn_scale_jitter = float(payload.get("tcn_scale_jitter", DEFAULT_TCN_SCALE_JITTER))
+            tcn_time_shift = int(payload.get("tcn_time_shift", DEFAULT_TCN_TIME_SHIFT))
+            fast_weight   = float(payload.get("fast_weight", DEFAULT_TCN_FAST_WEIGHT))
+            early_stopping_patience = int(payload.get("early_stopping_patience", DEFAULT_TCN_EARLY_STOPPING_PATIENCE))
 
-            # เตรียม directory สำหรับ intermediate files
-            processed_dir = DATA_DIR / "processed"
-            processed_dir.mkdir(parents=True, exist_ok=True)
-
-            # Intermediate file paths
-            features_csv = processed_dir / "train_features.csv"
-            tensor_npz   = processed_dir / "train_wave_tensor.npz"
-            embed_csv    = processed_dir / "train_tcn_embed.csv"
-            hybrid_csv   = processed_dir / "train_hybrid.csv"
-
-            # ตั้งชื่อโมเดล AutoGluon และ TCN
             requested_ag_name = payload.get("model_name", "")
             ag_model_name     = sanitize_model_name(requested_ag_name or f"model_{job_id[:8]}")
 
-            # ตัดสินใจว่าจะ train TCN ใหม่ หรือ reuse ของเดิม
             train_new_tcn         = bool(payload.get("train_new_tcn", True))
-            existing_tcn_name_raw = payload.get("existing_tcn_name") or ""
-            existing_tcn_name     = sanitize_model_name(existing_tcn_name_raw)
+            existing_tcn_name_raw = (payload.get("existing_tcn_name") or "").strip()
 
             if train_new_tcn:
-                tcn_model_name = ag_model_name          # ใช้ชื่อเดียวกับ AG model
+                tcn_model_name = ag_model_name
             else:
-                if not existing_tcn_name:
+                if not existing_tcn_name_raw:
                     raise Exception("existing_tcn_name is required when train_new_tcn=False")
-                tcn_model_name = existing_tcn_name      # reuse TCN ที่มีอยู่แล้ว
+                tcn_model_name = sanitize_model_name(existing_tcn_name_raw)
 
             model_dir    = TCN_DIR / tcn_model_name
             ag_model_dir = AUTOGLUON_DIR / ag_model_name
 
-            # Guard: ป้องกัน overwrite โมเดลที่มีอยู่แล้ว
             if ag_model_dir.exists():
                 raise Exception(f"AutoGluon model name already exists: {ag_model_name}")
             if train_new_tcn and model_dir.exists():
@@ -366,75 +555,221 @@ class TrainingService:
             if not train_new_tcn and not model_dir.exists():
                 raise Exception(f"TCN model not found: {tcn_model_name}")
 
-            # --- Step 1: Extract handcrafted features ---
-            job_store.update(job_id, progress=10, message="Extracting features...")
-            run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "extract_features.py"),
-                "--mode", "train",
-                "--in", str(dataset_path),
-                "--out", str(features_csv),
-            ])
+            mlflow_session = begin_training_run(
+                run_name=ag_model_name,
+                tags={
+                    "job_id": job_id,
+                    "pipeline": "tcn-autogluon",
+                    "ag_model_name": ag_model_name,
+                    "tcn_model_name": tcn_model_name,
+                    "train_new_tcn": train_new_tcn,
+                },
+            )
+            mlflow_info = dict(mlflow_session.info)
+            mlflow_log_params(
+                {
+                    "job_id": job_id,
+                    "dataset_path": str(dataset_path) if dataset_path is not None else "",
+                    "split_dir_requested": split_dir_raw,
+                    "use_existing_split": use_existing_split,
+                    "epochs": epochs,
+                    "batch_size": batch_size,
+                    "lr": lr,
+                    "embedding_dim": embedding_dim,
+                    "fast_ms": fast_ms,
+                    "target_col": target_col,
+                    "time_limit": time_limit,
+                    "ag_presets": ag_presets,
+                    "tcn_augment": tcn_augment,
+                    "tcn_noise_std": tcn_noise_std,
+                    "tcn_scale_jitter": tcn_scale_jitter,
+                    "tcn_time_shift": tcn_time_shift,
+                    "fast_weight": fast_weight,
+                    "early_stopping_patience": early_stopping_patience,
+                    "ag_model_name": ag_model_name,
+                    "tcn_model_name": tcn_model_name,
+                    "train_new_tcn": train_new_tcn,
+                }
+            )
 
-            # --- Step 2: Build waveform tensor ---
-            job_store.update(job_id, progress=20, message="Building wave tensor...")
-            run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "make_wave_tensor.py"),
-                "--in", str(dataset_path),
-                "--out", str(tensor_npz),
-                "--target-len", "1000",
-                "--label-col", target_col,
-            ])
+            split_dir = Path(split_dir_raw) if use_existing_split else DATA_DIR / "splits" / job_id
+            if use_existing_split and not split_dir.is_absolute():
+                split_dir = DATA_DIR.parent / split_dir
+            processed_dir = DATA_DIR / "processed" / job_id
+            if not use_existing_split:
+                split_dir.mkdir(parents=True, exist_ok=True)
+            processed_dir.mkdir(parents=True, exist_ok=True)
 
-            # --- Step 3: Train หรือ reuse TCN encoder ---
-            if train_new_tcn:
-                job_store.update(job_id, progress=40, message="Training TCN...")
+            split_csv = {
+                "train": split_dir / "train.csv",
+                "valid": split_dir / "valid.csv",
+                "test":  split_dir / "test.csv",
+            }
+            feature_csv = {name: processed_dir / f"{name}_features.csv" for name in split_csv}
+            tensor_npz  = {name: processed_dir / f"{name}_wave_tensor.npz" for name in split_csv}
+            embed_csv   = {name: processed_dir / f"{name}_tcn_embed.csv" for name in split_csv}
+            hybrid_csv  = {name: processed_dir / f"{name}_hybrid.csv" for name in split_csv}
+
+            pipeline_manifest = {
+                "job_id": job_id,
+                "dataset_path": str(dataset_path) if dataset_path is not None else None,
+                "split_dir": str(split_dir),
+                "processed_dir": str(processed_dir),
+                "split_csv": {name: str(path) for name, path in split_csv.items()},
+                "feature_csv": {name: str(path) for name, path in feature_csv.items()},
+                "tensor_npz": {name: str(path) for name, path in tensor_npz.items()},
+                "embed_csv": {name: str(path) for name, path in embed_csv.items()},
+                "hybrid_csv": {name: str(path) for name, path in hybrid_csv.items()},
+            }
+            pipeline_manifest_path = processed_dir / "pipeline_manifest.json"
+            pipeline_manifest_path.write_text(json.dumps(pipeline_manifest, indent=2), encoding="utf-8")
+            mlflow_log_params(
+                {
+                    "split_dir": str(split_dir),
+                    "processed_dir": str(processed_dir),
+                    "tcn_model_dir": str(model_dir),
+                    "ag_model_dir": str(ag_model_dir),
+                }
+            )
+            mlflow_log_artifacts([pipeline_manifest_path], artifact_path="pipeline")
+
+            missing_splits = [name for name, path in split_csv.items() if not path.exists()]
+            if use_existing_split:
+                if missing_splits:
+                    missing = ", ".join(f"{name}.csv" for name in missing_splits)
+                    raise Exception(f"Existing split dir is missing: {missing}")
+                job_store.update(job_id, progress=8, message="Using existing train/valid/test split...")
+            else:
+                if dataset_path is None:
+                    raise Exception("dataset_path is required when split_dir is not provided")
+                job_store.update(job_id, progress=8, message="Splitting dataset into train/valid/test...")
                 run_cmd([
-                    sys.executable, str(SCRIPTS_DIR / "train_tcn_encoder.py"),
-                    "--waves", str(tensor_npz),
+                    sys.executable, str(SCRIPT_PATHS["split_csv_train_test"]),
+                    "--in", str(dataset_path),
+                    "--outdir", str(split_dir),
+                    "--train-frac", "0.8",
+                    "--valid-frac", "0.1",
+                    "--test-frac", "0.1",
+                    "--seed", "42",
+                    "--stratify-cols", "type",
+                    "--label-col", target_col,
+                    "--target-bins", "6",
+                ])
+            mlflow_log_artifacts([split_dir / "split_manifest.csv"], artifact_path="splits")
+
+            for idx, split_name in enumerate(["train", "valid", "test"]):
+                base_progress = 12 + idx * 12
+                job_store.update(job_id, progress=base_progress, message=f"Extracting {split_name} features...")
+                run_cmd([
+                    sys.executable, str(SCRIPT_PATHS["extract_features"]),
+                    "--mode", "train",
+                    "--in", str(split_csv[split_name]),
+                    "--out", str(feature_csv[split_name]),
+                ])
+
+                job_store.update(job_id, progress=base_progress + 6, message=f"Building {split_name} tensor...")
+                run_cmd([
+                    sys.executable, str(SCRIPT_PATHS["make_wave_tensor"]),
+                    "--in", str(split_csv[split_name]),
+                    "--out", str(tensor_npz[split_name]),
+                    "--target-len", "1000",
+                    "--label-col", target_col,
+                ])
+
+            if train_new_tcn:
+                job_store.update(job_id, progress=52, message="Training TCN on train split only...")
+                tcn_cmd = [
+                    sys.executable, str(SCRIPT_PATHS["train_tcn_encoder"]),
+                    "--waves", str(tensor_npz["train"]),
+                    "--valid-waves", str(tensor_npz["valid"]),
                     "--out", str(model_dir),
                     "--epochs", str(epochs),
                     "--batch-size", str(batch_size),
                     "--lr", str(lr),
                     "--embedding-dim", str(embedding_dim),
+                    "--seed", "42",
+                    "--fast-ms", str(fast_ms),
+                    "--fast-weight", str(fast_weight),
+                    "--early-stopping-patience", str(early_stopping_patience),
                     "--log-target",
-                ])
+                ]
+                if tcn_augment:
+                    tcn_cmd.extend([
+                        "--augment",
+                        "--noise-std", str(tcn_noise_std),
+                        "--scale-jitter", str(tcn_scale_jitter),
+                        "--time-shift", str(tcn_time_shift),
+                    ])
+                run_cmd(tcn_cmd)
             else:
-                job_store.update(job_id, progress=40, message=f"Using existing TCN: {tcn_model_name}")
+                job_store.update(job_id, progress=52, message=f"Using existing TCN: {tcn_model_name}")
 
-            # วิเคราะห์ overfitting จาก training history
-            overfitting_history_path = model_dir / "train_history.json" if train_new_tcn \
-                else TCN_DIR / tcn_model_name / "train_history.json"
+            overfitting_history_path = model_dir / "train_history.json"
             overfitting = analyze_overfitting(overfitting_history_path)
+            tcn_history = load_tcn_history(overfitting_history_path)
+            mlflow_log_metrics(overfitting, prefix="tcn.overfitting")
+            mlflow_log_artifacts(
+                [
+                    model_dir / "config.json",
+                    model_dir / "train_history.json",
+                    model_dir / "learning_curve.png",
+                ],
+                artifact_path="tcn",
+            )
+            if log_model_dirs_enabled():
+                mlflow_log_artifacts([model_dir], artifact_path="models/tcn")
 
-            # --- Step 4: Export TCN embeddings ---
-            job_store.update(job_id, progress=55, message="Exporting embeddings...")
-            run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "export_tcn_encoder.py"),
-                "--model", str(model_dir),
-                "--waves", str(tensor_npz),
-                "--out", str(embed_csv),
-            ])
+            for idx, split_name in enumerate(["train", "valid", "test"]):
+                base_progress = 62 + idx * 7
+                job_store.update(job_id, progress=base_progress, message=f"Exporting {split_name} TCN embeddings...")
+                run_cmd([
+                    sys.executable, str(SCRIPT_PATHS["export_tcn_encoder"]),
+                    "--model", str(model_dir),
+                    "--waves", str(tensor_npz[split_name]),
+                    "--out", str(embed_csv[split_name]),
+                ])
 
-            # --- Step 5: Merge handcrafted features + TCN embeddings ---
-            job_store.update(job_id, progress=70, message="Merging features...")
-            run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "merge_features_and_embeddings.py"),
-                "--features", str(features_csv),
-                "--embeddings", str(embed_csv),
-                "--out", str(hybrid_csv),
-            ])
+                job_store.update(job_id, progress=base_progress + 3, message=f"Merging {split_name} hybrid features...")
+                run_cmd([
+                    sys.executable, str(SCRIPT_PATHS["merge_features_and_embeddings"]),
+                    "--features", str(feature_csv[split_name]),
+                    "--embeddings", str(embed_csv[split_name]),
+                    "--out", str(hybrid_csv[split_name]),
+                ])
 
-            # --- Step 6: Train AutoGluon tabular model ---
-            job_store.update(job_id, progress=90, message="Training AutoGluon...")
+            job_store.update(job_id, progress=86, message="Training AutoGluon on train split...")
             run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "train_ag_1stage.py"),
-                "--data", str(hybrid_csv),
+                sys.executable, str(SCRIPT_PATHS["train_ag_1stage"]),
+                "--train", str(hybrid_csv["train"]),
+                "--valid", str(hybrid_csv["valid"]),
+                "--test", str(hybrid_csv["test"]),
                 "--label", target_col,
                 "--model-dir", str(ag_model_dir),
                 "--model-name", ag_model_name,
-                "--time-limit", "300",
+                "--time-limit", str(time_limit),
+                "--presets", ag_presets,
+                "--weight-fast-ms", str(fast_ms),
+                "--fast-weight", str(fast_weight),
+                "--seed", "42",
                 "--log-target",
             ])
+            ag_metrics_path = ag_model_dir / "metrics.json"
+            if ag_metrics_path.exists():
+                ag_metrics = json.loads(ag_metrics_path.read_text(encoding="utf-8"))
+                mlflow_log_metrics(ag_metrics, prefix="ag")
+            mlflow_log_artifacts(
+                [
+                    ag_model_dir / "feature_cols.json",
+                    ag_model_dir / "meta.json",
+                    ag_model_dir / "metrics.json",
+                    ag_model_dir / f"valid_predictions_{ag_model_name}.csv",
+                    ag_model_dir / f"test_predictions_{ag_model_name}.csv",
+                    ag_model_dir / f"feature_importance_{ag_model_name}.csv",
+                ],
+                artifact_path="autogluon",
+            )
+            if log_model_dirs_enabled():
+                mlflow_log_artifacts([ag_model_dir], artifact_path="models/autogluon")
 
             # --- Step 7: Analyze results ---
             job_store.update(job_id, progress=92, message="Analyzing results...")
@@ -448,7 +783,7 @@ class TrainingService:
             # วิเคราะห์ regression predictions (scatter, residual, histogram)
             if val_pred_csv.exists():
                 run_cmd([
-                    sys.executable, str(SCRIPTS_DIR / "analyze_regression_preds.py"),
+                    sys.executable, str(SCRIPT_PATHS["analyze_regression_preds"]),
                     "--in",      str(val_pred_csv),
                     "--outdir",  str(analysis_dir),
                     "--fast-ms", str(fast_ms),
@@ -459,7 +794,7 @@ class TrainingService:
                 fi_analysis_dir = ANALYSIS_DIR / f"feature_importance_{ag_model_name}"
                 fi_analysis_dir.mkdir(parents=True, exist_ok=True)
                 run_cmd([
-                    sys.executable, str(SCRIPTS_DIR / "features.py"),
+                    sys.executable, str(SCRIPT_PATHS["features"]),
                     "--in",     str(fi_csv),
                     "--outdir", str(fi_analysis_dir),
                     "--topn",   "30",
@@ -471,6 +806,7 @@ class TrainingService:
             full_csv        = fi_analysis_dir / "feature_importance_full_sorted.csv"
             if full_csv.exists():
                 feature_summary = parse_feature_summary(fi_analysis_dir, topn=30)
+                mlflow_log_metrics(feature_summary, prefix="feature_importance")
 
             # อ่าน metrics จาก summary.txt ที่ analyze_regression_preds.py สร้างไว้
             metrics      = {}
@@ -489,6 +825,10 @@ class TrainingService:
                         metrics["mae_fast"]       = float(line.split(":")[1].strip())
                     elif line.startswith("MAE(slow"):
                         metrics["mae_slow"]       = float(line.split(":")[1].strip())
+            mlflow_log_metrics(metrics, prefix="analysis")
+            mlflow_log_artifacts([analysis_dir], artifact_path="analysis/regression")
+            mlflow_log_artifacts([fi_analysis_dir], artifact_path="analysis/feature_importance")
+            evaluation = load_ag_evaluation_data(ag_model_dir)
 
             # เขียน model_meta.json เก็บ metadata รวมถึง metrics และ plot paths
             meta = {
@@ -497,8 +837,13 @@ class TrainingService:
                 "ag_name":  ag_model_name,
                 "ag_path":  str(ag_model_dir),
                 "train_new_tcn": train_new_tcn,
+                "split_dir": str(split_dir),
+                "use_existing_split": use_existing_split,
+                "mlflow": mlflow_info,
                 "result": {
                     "metrics":             metrics,
+                    "history":             tcn_history,
+                    "evaluation":          evaluation,
                     "feature_summary":     feature_summary,
                     "overfitting_summary": overfitting,
                     "plots": {
@@ -514,6 +859,56 @@ class TrainingService:
                 }
             }
             (ag_model_dir / "model_meta.json").write_text(json.dumps(meta, indent=2))
+            registry_package = {
+                "model_type": "tcn_autogluon_hybrid",
+                "ag_model_name": ag_model_name,
+                "tcn_model_name": tcn_model_name,
+                "ag_model_dir": str(ag_model_dir),
+                "tcn_model_dir": str(model_dir),
+                "split_dir": str(split_dir),
+                "metrics": metrics,
+                "feature_summary": feature_summary,
+                "overfitting_summary": overfitting,
+                "artifacts": {
+                    "model_meta": "model_meta.json",
+                    "ag_metrics": "metrics.json",
+                    "feature_cols": "feature_cols.json",
+                    "tcn_history": str(model_dir / "train_history.json"),
+                    "tcn_checkpoint": str(model_dir / "tcn_encoder.pt"),
+                },
+            }
+            registry_package_path = ag_model_dir / "registry_model_package.json"
+            registry_package_path.write_text(json.dumps(registry_package, indent=2), encoding="utf-8")
+            mlflow_log_artifacts([ag_model_dir / "model_meta.json"], artifact_path="autogluon")
+            mlflow_log_artifacts(
+                [
+                    ag_model_dir / "model_meta.json",
+                    registry_package_path,
+                    ag_model_dir / "metrics.json",
+                    ag_model_dir / "feature_cols.json",
+                    model_dir / "config.json",
+                    model_dir / "train_history.json",
+                ],
+                artifact_path="registered_model",
+            )
+            registry_info = mlflow_register_model_version(
+                run_id=mlflow_info.get("run_id"),
+                source_artifact_path="registered_model",
+                tags={
+                    "ag_model_name": ag_model_name,
+                    "tcn_model_name": tcn_model_name,
+                    "train_new_tcn": train_new_tcn,
+                    "split_source": "existing" if use_existing_split else "generated",
+                },
+            )
+            mlflow_info["registry"] = registry_info
+            meta["mlflow"] = mlflow_info
+            (ag_model_dir / "model_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            mlflow_log_artifacts([ag_model_dir / "model_meta.json"], artifact_path="autogluon")
+            mlflow_log_artifacts([ag_model_dir / "model_meta.json"], artifact_path="registered_model")
+            mlflow_set_tags({"status": "completed"})
+            if mlflow_session is not None:
+                mlflow_session.end("FINISHED")
 
             job_store.update(
                 job_id,
@@ -526,8 +921,14 @@ class TrainingService:
                     "train_new_tcn":  train_new_tcn,
                     "tcn_model_dir":  str(model_dir),
                     "ag_model_dir":   str(ag_model_dir),
+                    "split_dir":      str(split_dir),
+                    "processed_dir":  str(processed_dir),
+                    "use_existing_split": use_existing_split,
+                    "mlflow":         mlflow_info,
                     "overfitting_summary": overfitting,
                     "metrics":        metrics,
+                    "history":        tcn_history,
+                    "evaluation":     evaluation,
                     "feature_summary": feature_summary,
                     "plots": {
                         "learning_curve":      f"/api/files/tcn/{tcn_model_name}/learning_curve.png",
@@ -546,24 +947,37 @@ class TrainingService:
                         "embedding_dim": embedding_dim,
                         "target_col":    target_col,
                         "fast_ms":       fast_ms,
+                        "fast_weight":   fast_weight,
+                        "time_limit":    time_limit,
+                        "ag_presets":    ag_presets,
+                        "tcn_augment":   tcn_augment,
+                        "early_stopping_patience": early_stopping_patience,
                     },
                     "pipeline": {  # debug info
                         "used_existing_tcn": not train_new_tcn,
                         "tcn_source":        tcn_model_name,
+                        "split_source":      "existing" if use_existing_split else "generated",
                     }
                 },
             )
 
         except subprocess.CalledProcessError as e:
+            err = e.stderr or e.stdout or str(e)
+            mlflow_set_tags({"status": "failed", "failure_type": "subprocess", "error": err[:500]})
+            if mlflow_session is not None:
+                mlflow_session.end("FAILED")
             # Script subprocess ล้มเหลว — เก็บ stderr/stdout เพื่อ debug
             job_store.update(
                 job_id,
                 status="failed",
                 progress=100,
                 message="Training failed",
-                error=e.stderr or e.stdout or str(e),
+                error=err,
             )
         except Exception as e:
+            mlflow_set_tags({"status": "failed", "failure_type": "exception", "error": str(e)[:500]})
+            if mlflow_session is not None:
+                mlflow_session.end("FAILED")
             job_store.update(
                 job_id,
                 status="failed",
@@ -598,13 +1012,7 @@ class PredictionService:
         """
         job_id = str(uuid.uuid4())
         job_store.create(job_id, "predict")
-
-        thread = threading.Thread(
-            target=PredictionService._run_prediction,
-            args=(job_id, payload),
-            daemon=True,
-        )
-        thread.start()
+        job_queue.submit(job_id, "predict", PredictionService._run_prediction, payload)
         return job_id
 
     @staticmethod
@@ -620,15 +1028,16 @@ class PredictionService:
 
             # เตรียม directory โครงสร้าง
             processed_dir  = DATA_DIR / "processed"
-            prediction_dir = processed_dir / "prediction"
+            prediction_dir = processed_dir / "prediction" / job_id
             processed_dir.mkdir(parents=True, exist_ok=True)
             prediction_dir.mkdir(parents=True, exist_ok=True)
 
             # Intermediate file paths
-            features_csv = processed_dir / "infer_features.csv"
-            tensor_npz   = processed_dir / "infer_wave_tensor.npz"
-            embed_csv    = processed_dir / "infer_tcn_embed.csv"
-            hybrid_csv   = processed_dir / "infer_hybrid.csv"
+            signal_csv   = prediction_dir / "infer_signal_long.csv"
+            features_csv = prediction_dir / "infer_features.csv"
+            tensor_npz   = prediction_dir / "infer_wave_tensor.npz"
+            embed_csv    = prediction_dir / "infer_tcn_embed.csv"
+            hybrid_csv   = prediction_dir / "infer_hybrid.csv"
 
             # Output prediction CSV แยกตาม job_id เพื่อไม่ชนกัน
             result_dir = RESULTS_DIR / job_id
@@ -636,7 +1045,7 @@ class PredictionService:
             pred_csv = result_dir / "pred_1stage_hybrid.csv"
 
             # ตรวจสอบชื่อโมเดลและ resolve path
-            model_name = sanitize_model_name(payload.get("model_name", ""))
+            model_name = sanitize_model_name(payload.get("model_name") or DEFAULT_MODEL_NAME)
             if not model_name:
                 raise Exception("model_name is required")
 
@@ -654,46 +1063,54 @@ class PredictionService:
             plot_dir = PLOTS_DIR / job_id
             plot_dir.mkdir(parents=True, exist_ok=True)
 
-            # --- Step 1: Extract features ---
-            job_store.update(job_id, progress=10, message="Extracting features...")
+            # --- Step 1: Normalize uploaded signal table ---
+            job_store.update(job_id, progress=10, message="Preparing prediction dataset...")
             run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "extract_features.py"),
-                "--mode", "pred",
+                sys.executable, str(SCRIPT_PATHS["convert_signal_csv"]),
                 "--in", str(dataset_path),
+                "--out", str(signal_csv),
+            ])
+
+            # --- Step 2: Extract features ---
+            job_store.update(job_id, progress=20, message="Extracting features...")
+            run_cmd([
+                sys.executable, str(SCRIPT_PATHS["extract_features"]),
+                "--mode", "pred",
+                "--in", str(signal_csv),
                 "--out", str(features_csv),
             ])
 
-            # --- Step 2: Build waveform tensor ---
-            job_store.update(job_id, progress=20, message="Building tensor...")
+            # --- Step 3: Build waveform tensor ---
+            job_store.update(job_id, progress=32, message="Building tensor...")
             run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "make_wave_tensor.py"),
-                "--in", str(dataset_path),
+                sys.executable, str(SCRIPT_PATHS["make_wave_tensor"]),
+                "--in", str(signal_csv),
                 "--out", str(tensor_npz),
                 "--target-len", "1000",
             ])
 
-            # --- Step 3: Export TCN embeddings ---
-            job_store.update(job_id, progress=40, message="Extracting embeddings...")
+            # --- Step 4: Export TCN embeddings ---
+            job_store.update(job_id, progress=48, message="Extracting embeddings...")
             run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "export_tcn_encoder.py"),
+                sys.executable, str(SCRIPT_PATHS["export_tcn_encoder"]),
                 "--model", str(model_dir),
                 "--waves", str(tensor_npz),
                 "--out", str(embed_csv),
             ])
 
-            # --- Step 4: Merge features + embeddings ---
-            job_store.update(job_id, progress=60, message="Merging features...")
+            # --- Step 5: Merge features + embeddings ---
+            job_store.update(job_id, progress=64, message="Merging features...")
             run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "merge_features_and_embeddings.py"),
+                sys.executable, str(SCRIPT_PATHS["merge_features_and_embeddings"]),
                 "--features", str(features_csv),
                 "--embeddings", str(embed_csv),
                 "--out", str(hybrid_csv),
             ])
 
-            # --- Step 5: Run AutoGluon inference ---
-            job_store.update(job_id, progress=75, message="Running prediction...")
+            # --- Step 6: Run AutoGluon inference ---
+            job_store.update(job_id, progress=78, message="Running prediction...")
             run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "predict_ag_1stage.py"),
+                sys.executable, str(SCRIPT_PATHS["predict_ag_1stage"]),
                 "--model-path", str(ag_model_dir),
                 "--in", str(hybrid_csv),
                 "--out", str(pred_csv),
@@ -702,8 +1119,8 @@ class PredictionService:
             # --- Step 6: Plot waveforms พร้อม annotation ผล predict ---
             job_store.update(job_id, progress=90, message="Generating waveform plots...")
             run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "plot_pred_on_waveforms.py"),
-                "--raw",    str(dataset_path),
+                sys.executable, str(SCRIPT_PATHS["plot_pred_on_waveforms"]),
+                "--raw",    str(signal_csv),
                 "--pred",   str(pred_csv),
                 "--outdir", str(plot_dir),
                 "--topk",   "30",    # plot 30 waveforms แรก
@@ -725,7 +1142,8 @@ class PredictionService:
                 progress=100,
                 message="Prediction done",
                 result={
-                    "_dataset_path":       str(dataset_path),
+                    "_dataset_path":       str(signal_csv),
+                    "_source_dataset_path": str(dataset_path),
                     "_pred_csv":           str(pred_csv),
                     "total_waves":         len(pred_df) if pred_csv.exists() else 0,
                     "predictions_csv":     f"/api/files/results/{job_id}/pred_1stage_hybrid.csv",

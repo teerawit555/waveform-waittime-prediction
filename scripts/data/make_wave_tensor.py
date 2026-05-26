@@ -1,14 +1,53 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from pandas.errors import ParserError
 
 
 # small constant to avoid division by zero
 EPS = 1e-12
+
+
+def read_csv_robust(path: Path) -> pd.DataFrame:
+    for attempt in range(1, 4):
+        try:
+            return pd.read_csv(path, low_memory=False)
+        except (OSError, ParserError) as exc:
+            if attempt == 3:
+                print(f"[WARN] C CSV reader failed for {path}: {exc}")
+                print("[WARN] Retrying with pandas python engine; this is slower but more tolerant.")
+                return pd.read_csv(path, engine="python")
+            print(f"[WARN] CSV read failed on attempt {attempt}/3: {exc}")
+            time.sleep(2)
+
+
+def signal_wide_to_long(df: pd.DataFrame, sample_col: str = "Signal", dt_ms: float = 0.01) -> pd.DataFrame | None:
+    if sample_col not in df.columns:
+        return None
+
+    value_cols = [col for col in df.columns if str(col).endswith(":")]
+    if not value_cols:
+        return None
+
+    samples = pd.to_numeric(df[sample_col], errors="raise").astype(int).to_numpy()
+    rows = []
+    for index, col in enumerate(value_cols, start=1):
+        name = str(col).rstrip(":")
+        numeric_part = "".join(filter(str.isdigit, name))
+        wave_id = int(numeric_part) if numeric_part else index
+        rows.append(pd.DataFrame({
+            "wave_id": wave_id,
+            "sample": samples,
+            "time_ms": np.round(samples * dt_ms, 6),
+            "value": pd.to_numeric(df[col], errors="raise").to_numpy(float),
+        }))
+
+    return pd.concat(rows, ignore_index=True).sort_values(["wave_id", "sample"]).reset_index(drop=True)
 
 
 def resample_wave(t: np.ndarray, x: np.ndarray, target_len: int) -> tuple[np.ndarray, np.ndarray]:
@@ -165,14 +204,17 @@ def main() -> None:
     # Load CSV dataset
     # =========================
 
-    df = pd.read_csv(in_path)
+    df = read_csv_robust(in_path)
 
     required = ["wave_id", "sample", "time_ms", "value"]
 
     missing = [c for c in required if c not in df.columns]
 
     if missing:
-        raise KeyError(f"Missing required columns: {missing}")
+        long_df = signal_wide_to_long(df)
+        if long_df is None:
+            raise KeyError(f"Missing required columns: {missing}")
+        df = long_df
 
     # sort waveform samples
     df = df.sort_values(["wave_id", "sample"]).copy()

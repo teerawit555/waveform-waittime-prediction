@@ -1,53 +1,53 @@
 Train (in used)
 
-python scripts/extract_features.py --mode train --in data/data_for_train_m_n.csv --out data/processed/train_features.csv
+python scripts/features/extract_features.py --mode train --in data/data_for_train_m_n.csv --out data/processed/train_features.csv
 
 --------------------------------------------------------
 -- (not used) version train/valid (80/20) no test (not used)
-python scripts/split_csv_train_test.py === split train (80) test (20)
-python scripts/make_wave_tensor.py --in data/data_for_train_m_n.csv --out data/processed/train_wave_tensor.npz --target-len 1000 --label-col wait_time_ms
+python scripts/data/split_csv_train_test.py === split train (80) test (20)
+python scripts/data/make_wave_tensor.py --in data/data_for_train_m_n.csv --out data/processed/train_wave_tensor.npz --target-len 1000 --label-col wait_time_ms
 
 -- version Train/Test (not used)
-python scripts/make_wave_tensor.py --in data/train_split.csv --out data/processed/train_wave_tensor_split.npz --target-len 1000 --label-col wait_time_ms
-python scripts/make_wave_tensor.py --in data/test_split.csv --out data/processed/test_wave_tensor_split.npz --target-len 1000 --label-col wait_time_ms
+python scripts/data/make_wave_tensor.py --in data/train_split.csv --out data/processed/train_wave_tensor_split.npz --target-len 1000 --label-col wait_time_ms
+python scripts/data/make_wave_tensor.py --in data/test_split.csv --out data/processed/test_wave_tensor_split.npz --target-len 1000 --label-col wait_time_ms
 --------------------------------------------------------
 -- version Train/Valid (in used)
-python scripts/train_tcn_encoder.py --waves data/processed/train_wave_tensor.npz --out models/tcn_v1 --epochs 30 --batch-size 64 --lr 0.001 --embedding-dim 64 --log-target
+python scripts/tcn/train_tcn_encoder.py --waves data/processed/train_wave_tensor.npz --out models/tcn_v1 --epochs 30 --batch-size 64 --lr 0.001 --embedding-dim 64 --log-target
 -- version Train/Test (not used)
-python scripts/train_tcn_encoder.py --waves data/processed/train_wave_tensor_split.npz --test-waves data/processed/test_wave_tensor_split.npz --out models/tcn_v2_train_test --log-target
+python scripts/tcn/train_tcn_encoder.py --waves data/processed/train_wave_tensor_split.npz --test-waves data/processed/test_wave_tensor_split.npz --out models/tcn_v2_train_test --log-target
 --------------------------------------------------------
-python scripts/export_tcn_encoder.py --model models/tcn_v1 --waves data/processed/train_wave_tensor.npz --out data/processed/train_tcn_embed.csv
-python scripts/merge_features_and_embeddings.py --features data/processed/train_features.csv --embeddings data/processed/train_tcn_embed.csv --out data/processed/train_hybrid.csv
-python scripts/train_ag_1stage.py --data data/processed/train_hybrid.csv --label wait_time_ms --model-dir AutogluonModels/ag_1stage_hybrid_v1 --time-limit 300 --log-target
+python scripts/tcn/export_tcn_encoder.py --model models/tcn_v1 --waves data/processed/train_wave_tensor.npz --out data/processed/train_tcn_embed.csv
+python scripts/features/merge_features_and_embeddings.py --features data/processed/train_features.csv --embeddings data/processed/train_tcn_embed.csv --out data/processed/train_hybrid.csv
+python scripts/autogluon/train_ag_1stage.py --data data/processed/train_hybrid.csv --label wait_time_ms --model-dir AutogluonModels/ag_1stage_hybrid_v1 --time-limit 300 --log-target
 
 ==================================================
 Predict (in uesd)
 
-python scripts/extract_features.py --mode pred --in data/data_for_pred.csv --out data/processed/infer_features.csv
-python scripts/make_wave_tensor.py --in data/data_for_pred.csv --out data/processed/infer_wave_tensor.npz --target-len 1000
-python scripts/export_tcn_encoder.py --model models/tcn_v1 --waves data/processed/infer_wave_tensor.npz --out data/processed/infer_tcn_embed.csv
-python scripts/merge_features_and_embeddings.py --features data/processed/infer_features.csv --embeddings data/processed/infer_tcn_embed.csv --out data/processed/infer_hybrid.csv
-python scripts/predict_ag_1stage.py --model-path AutogluonModels/ag_1stage_hybrid_v1 --in data/processed/infer_hybrid.csv --out data/processed/prediction/pred_1stage_hybrid.csv
+python scripts/features/extract_features.py --mode pred --in data/data_for_pred.csv --out data/processed/infer_features.csv
+python scripts/data/make_wave_tensor.py --in data/data_for_pred.csv --out data/processed/infer_wave_tensor.npz --target-len 1000
+python scripts/tcn/export_tcn_encoder.py --model models/tcn_v1 --waves data/processed/infer_wave_tensor.npz --out data/processed/infer_tcn_embed.csv
+python scripts/features/merge_features_and_embeddings.py --features data/processed/infer_features.csv --embeddings data/processed/infer_tcn_embed.csv --out data/processed/infer_hybrid.csv
+python scripts/autogluon/predict_ag_1stage.py --model-path AutogluonModels/ag_1stage_hybrid_v1 --in data/processed/infer_hybrid.csv --out data/processed/prediction/pred_1stage_hybrid.csv
 
 Analysis
 
-python scripts/analyze_regression_preds.py --in AutogluonModels/ag_1stage_hybrid_v1/test_predictions_20260313_195333.csv --outdir analysis/ag_1stage_hybrid_v1
+python scripts/analysis/analyze_regression_preds.py --in AutogluonModels/ag_1stage_hybrid_v1/test_predictions_20260313_195333.csv --outdir analysis/ag_1stage_hybrid_v1
 
 Generate predict data
 
 python scripts\generate\generate_sample.py --out data\data_for_pred.csv --dt_ms 0.01 --t_end_ms 9.99 --n_waves 3000                                      
 
 30 wave แรก
-python scripts/plot_pred_on_waveforms.py --raw data\data_for_pred.csv --pred data\processed\prediction\pred_1stage_hybrid.csv --outdir analysis\pred_waveplots_first --topk 30 --mode first
+python scripts/analysis/plot_pred_on_waveforms.py --raw data\data_for_pred.csv --pred data\processed\prediction\pred_1stage_hybrid.csv --outdir analysis\pred_waveplots_first --topk 30 --mode first
 
 30 ตัวที่ pred ต่ำสุด
-python scripts/plot_pred_on_waveforms.py --raw data\data_for_pred.csv --pred data\processed\prediction\pred_1stage_hybrid.csv --outdir analysis\pred_waveplots_low --topk 30 --mode low
+python scripts/analysis/plot_pred_on_waveforms.py --raw data\data_for_pred.csv --pred data\processed\prediction\pred_1stage_hybrid.csv --outdir analysis\pred_waveplots_low --topk 30 --mode low
 
 30 random
-python scripts/plot_pred_on_waveforms.py --raw data\data_for_pred.csv --pred data\processed\prediction\pred_1stage_hybrid.csv --outdir analysis\pred_waveplots_random --topk 30 --mode random
+python scripts/analysis/plot_pred_on_waveforms.py --raw data\data_for_pred.csv --pred data\processed\prediction\pred_1stage_hybrid.csv --outdir analysis\pred_waveplots_random --topk 30 --mode random
 
 Plot data for train worst case 
-python scripts/plot_train_worst_waveforms.py --raw data/data_for_train_m_n.csv --worst analysis/ag_1stage_hybrid_v1/worst_cases.csv --outdir analysis/ag_1stage_hybrid_v1/worst_waveplots --topk 30
+python scripts/analysis/plot_train_worst_waveforms.py --raw data/data_for_train_m_n.csv --worst analysis/ag_1stage_hybrid_v1/worst_cases.csv --outdir analysis/ag_1stage_hybrid_v1/worst_waveplots --topk 30
 
 Features Analysis
-python scripts/features.py --in AutogluonModels/ag_1stage_hybrid_v1/feature_importance_20260315_142424.csv --outdir analysis/feature_importance_ag_1stage_hybrid_v1 --topn 30
+python scripts/analysis/features.py --in AutogluonModels/ag_1stage_hybrid_v1/feature_importance_20260315_142424.csv --outdir analysis/feature_importance_ag_1stage_hybrid_v1 --topn 30

@@ -8,6 +8,30 @@ import numpy as np
 import pandas as pd
 
 
+def signal_wide_to_long(df: pd.DataFrame, sample_col: str = "Signal", dt_ms: float = 0.01) -> pd.DataFrame | None:
+    if sample_col not in df.columns:
+        return None
+
+    value_cols = [col for col in df.columns if str(col).endswith(":")]
+    if not value_cols:
+        return None
+
+    samples = pd.to_numeric(df[sample_col], errors="raise").astype(int).to_numpy()
+    rows = []
+    for index, col in enumerate(value_cols, start=1):
+        name = str(col).rstrip(":")
+        numeric_part = "".join(filter(str.isdigit, name))
+        wave_id = int(numeric_part) if numeric_part else index
+        rows.append(pd.DataFrame({
+            "wave_id": wave_id,
+            "sample": samples,
+            "time_ms": np.round(samples * dt_ms, 6),
+            "value": pd.to_numeric(df[col], errors="raise").to_numpy(float),
+        }))
+
+    return pd.concat(rows, ignore_index=True).sort_values(["wave_id", "sample"]).reset_index(drop=True)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser("plot_pred_on_waveforms")
     ap.add_argument("--raw",     required=True, help="raw waveform csv")
@@ -28,7 +52,10 @@ def main() -> None:
     required_raw = ["wave_id", "sample", "time_ms", "value"]
     missing_raw  = [c for c in required_raw if c not in raw.columns]
     if missing_raw:
-        raise KeyError(f"raw file missing columns: {missing_raw}")
+        long_raw = signal_wide_to_long(raw)
+        if long_raw is None:
+            raise KeyError(f"raw file missing columns: {missing_raw}")
+        raw = long_raw
 
     required_pred = ["wave_id", "pred_wait_time_ms"]
     missing_pred  = [c for c in required_pred if c not in pred.columns]

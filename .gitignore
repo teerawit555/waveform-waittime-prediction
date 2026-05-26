@@ -43,7 +43,8 @@ __pycache__/
 .env.*
 !.env.example
 
-analysis/
+/analysis/
+mlruns/
 data/processed/
 models/
 *.npz

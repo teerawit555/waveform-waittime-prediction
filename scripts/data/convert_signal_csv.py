@@ -19,8 +19,9 @@ convert_signal_csv.py
     ...
 
 Usage:
-    python convert_signal_csv.py --in SignalSample.csv --out signal_long.csv
-    python convert_signal_csv.py --in SignalSample.csv --out signal_long.csv --dt-ms 0.01
+    python scripts/data/convert_signal_csv.py --in SignalSample.csv --out signal_long.csv
+    python scripts/data/convert_signal_csv.py --in SignalSample.xlsx --out signal_long.csv
+    python scripts/data/convert_signal_csv.py --in SignalSample.csv --out signal_long.csv --dt-ms 0.01
 """
 
 from __future__ import annotations
@@ -30,6 +31,36 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+
+LONG_COLUMNS = ["wave_id", "sample", "time_ms", "value"]
+
+
+def read_signal_table(path: Path) -> pd.DataFrame:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return pd.read_csv(path)
+    if suffix == ".xlsx":
+        return pd.read_excel(path)
+    raise ValueError(f"Unsupported input file type: {suffix}. Use .csv or .xlsx.")
+
+
+def normalize_long_table(df: pd.DataFrame, dt_ms: float = 0.01) -> pd.DataFrame | None:
+    columns = set(df.columns)
+    required_without_time = {"wave_id", "sample", "value"}
+    if not required_without_time.issubset(columns):
+        return None
+
+    long_df = df.copy()
+    if "time_ms" not in long_df.columns:
+        long_df["time_ms"] = pd.to_numeric(long_df["sample"], errors="raise") * dt_ms
+
+    long_df = long_df[LONG_COLUMNS].copy()
+    long_df["wave_id"] = long_df["wave_id"]
+    long_df["sample"] = pd.to_numeric(long_df["sample"], errors="raise").astype(int)
+    long_df["time_ms"] = pd.to_numeric(long_df["time_ms"], errors="raise")
+    long_df["value"] = pd.to_numeric(long_df["value"], errors="raise")
+    return long_df.sort_values(["wave_id", "sample"]).reset_index(drop=True)
 
 
 def convert_wide_to_long(
@@ -64,11 +95,11 @@ def convert_wide_to_long(
 
     if not value_cols:
         raise ValueError(
-            "ไม่พบ value columns (คาดว่าชื่อต้องลงท้ายด้วย ':' เช่น 'Signal1:')\n"
-            f"Columns ที่มี: {df.columns.tolist()}"
+            "No value columns found. Expected columns ending with ':' such as 'Signal1:'.\n"
+            f"Available columns: {df.columns.tolist()}"
         )
 
-    print(f"พบ {len(value_cols)} waves: {value_cols}")
+    print(f"Found {len(value_cols)} waves: {value_cols}")
 
     # แปลง wide → long ด้วย pd.melt (เร็วกว่า loop)
     # สร้าง mapping: wave_id → numeric id
@@ -101,20 +132,20 @@ def convert_wide_to_long(
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="แปลง SignalSample wide-format CSV → long-format สำหรับ extract_features.py"
+        description="Convert SignalSample wide-format CSV/XLSX to long-format CSV for extract_features.py"
     )
-    ap.add_argument("--in",  dest="in_path",  required=True, help="path ของ input CSV (wide format)")
-    ap.add_argument("--out", dest="out_path", required=True, help="path ของ output CSV (long format)")
+    ap.add_argument("--in",  dest="in_path",  required=True, help="input CSV/XLSX path")
+    ap.add_argument("--out", dest="out_path", required=True, help="output long-format CSV path")
     ap.add_argument(
         "--dt-ms",
         type=float,
         default=0.01,
-        help="ระยะห่างระหว่าง sample ในหน่วย ms (default: 0.01 → 1000 samples = 10ms)",
+        help="sample interval in ms (default: 0.01)",
     )
     ap.add_argument(
         "--sample-col",
         default="Signal",
-        help="ชื่อ column ที่เป็น sample index (default: 'Signal')",
+        help="sample index column name (default: 'Signal')",
     )
     args = ap.parse_args()
 
@@ -123,10 +154,12 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Reading: {in_path}")
-    df = pd.read_csv(in_path)
+    df = read_signal_table(in_path)
     print(f"Input shape: {df.shape}  columns: {df.columns.tolist()}")
 
-    long_df = convert_wide_to_long(df, sample_col=args.sample_col, dt_ms=args.dt_ms)
+    long_df = normalize_long_table(df, dt_ms=args.dt_ms)
+    if long_df is None:
+        long_df = convert_wide_to_long(df, sample_col=args.sample_col, dt_ms=args.dt_ms)
 
     long_df.to_csv(out_path, index=False)
     print(f"\nSaved: {out_path}")

@@ -1,12 +1,25 @@
 type PlotCardProps = {
   title: string;
   imageUrl?: string | null;
+  eyebrow?: string;
+  description?: string;
+  variant?: 'standard' | 'hero' | 'compact';
 };
 
-export default function PlotCard({ title, imageUrl }: PlotCardProps) {
+export default function PlotCard({
+  title,
+  imageUrl,
+  eyebrow,
+  description,
+  variant = 'standard',
+}: PlotCardProps) {
   return (
-    <div className="plot-card">
-      <div className="plot-title">{title}</div>
+    <div className={`plot-card plot-card-${variant}`}>
+      <div className="plot-title">
+        {eyebrow ? <span>{eyebrow}</span> : null}
+        <strong>{title}</strong>
+        {description ? <small>{description}</small> : null}
+      </div>
       {imageUrl
         ? <div className="plot-image-wrap">
             <img src={imageUrl} alt={title} />

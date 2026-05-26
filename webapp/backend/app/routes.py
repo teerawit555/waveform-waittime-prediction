@@ -1,22 +1,68 @@
 from __future__ import annotations
 
 import sys
+import json
+from hmac import compare_digest
 import pandas as pd
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_from_directory
 
-from .config import ANALYSIS_DIR, PLOTS_DIR, RESULTS_DIR, UPLOAD_DIR, AUTOGLUON_DIR, TCN_DIR
-from .data_service import build_preview, load_dataset, save_uploaded_file
+from .config import ADMIN_TOKEN, ANALYSIS_DIR, AUTOGLUON_DIR, DEFAULT_MODEL_NAME, PLOTS_DIR, RESULTS_DIR, TCN_DIR, UPLOAD_DIR
+from .data_service import build_preview_from_file, save_uploaded_file
+from .job_queue import job_queue
 from .job_store import job_store
-from .training_service import PredictionService, TrainingService, run_cmd, SCRIPTS_DIR, list_available_models
+from .mlflow_service import get_mlflow_runtime_status, get_model_registry_summary, get_tracking_summary
+from .training_service import PredictionService, TrainingService, run_cmd, SCRIPT_PATHS, list_available_models, load_ag_evaluation_data, load_tcn_history
 
 api = Blueprint("api", __name__)
+
+
+def _get_admin_token() -> str:
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return request.headers.get("X-Admin-Token", "").strip()
+
+
+def is_admin_request() -> bool:
+    token = _get_admin_token()
+    return bool(ADMIN_TOKEN and token and compare_digest(token, ADMIN_TOKEN))
+
+
+def require_admin():
+    if not ADMIN_TOKEN:
+        return jsonify({"error": "Admin token is not configured. Set NEUROSETTLE_ADMIN_TOKEN on the backend."}), 503
+
+    if is_admin_request():
+        return None
+
+    return jsonify({"error": "Admin access required"}), 401
 
 
 @api.route("/health", methods=["GET"])
 def health_check():
     return jsonify({"ok": True})
+
+
+@api.route("/mlflow", methods=["GET"])
+def get_mlflow_config():
+    return jsonify(get_tracking_summary())
+
+
+@api.route("/mlflow/runtime", methods=["GET"])
+def get_mlflow_runtime():
+    return jsonify(get_mlflow_runtime_status())
+
+
+@api.route("/mlflow/model-registry", methods=["GET"])
+def get_mlflow_model_registry():
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
+    model_name = request.args.get("name") or None
+    return jsonify(get_model_registry_summary(registered_model_name=model_name) if model_name else get_model_registry_summary())
 
 
 @api.route("/upload", methods=["POST"])
@@ -27,8 +73,7 @@ def upload_dataset():
     file = request.files["file"]
     try:
         path = save_uploaded_file(file, UPLOAD_DIR)
-        df = load_dataset(path)
-        preview = build_preview(df)
+        preview = build_preview_from_file(path)
         preview["dataset_path"] = str(path)
         return jsonify(preview)
     except Exception as exc:
@@ -37,6 +82,10 @@ def upload_dataset():
 
 @api.route("/train", methods=["POST"])
 def start_train():
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
     payload = request.get_json(force=True)
     job_id = TrainingService.start_training(payload)
     return jsonify({"job_id": job_id})
@@ -52,6 +101,11 @@ def start_predict():
 @api.route("/jobs", methods=["GET"])
 def list_jobs():
     return jsonify({"jobs": job_store.list_ids()})
+
+
+@api.route("/jobs/queue", methods=["GET"])
+def get_job_queue():
+    return jsonify(job_queue.stats())
 
 
 @api.route("/jobs/<job_id>", methods=["GET"])
@@ -118,7 +172,7 @@ def plot_wave_on_demand():
     if not out_png.exists():
         try:
             run_cmd([
-                sys.executable, str(SCRIPTS_DIR / "plot_pred_on_waveforms.py"),
+                sys.executable, str(SCRIPT_PATHS["plot_pred_on_waveforms"]),
                 "--raw",     str(dataset_path),
                 "--pred",    str(pred_csv),
                 "--outdir",  str(plot_dir),
@@ -157,22 +211,56 @@ def plot_wave_on_demand():
 
 @api.route("/models", methods=["GET"])
 def get_models():
+    models = list_available_models()
+    if is_admin_request():
+        return jsonify({
+            "default_model": DEFAULT_MODEL_NAME,
+            "models": models,
+        })
+
+    default_models = [model for model in models if model.get("name") == DEFAULT_MODEL_NAME and model.get("ready")]
     return jsonify({
-        "models": list_available_models()
+        "default_model": DEFAULT_MODEL_NAME,
+        "models": default_models,
     })
 
 @api.route("/models/<model_name>", methods=["GET"])
 def get_model(model_name: str):
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
     ag_dir    = AUTOGLUON_DIR / model_name
     meta_file = ag_dir / "model_meta.json"
     if not meta_file.exists():
         return jsonify({"error": "Model not found"}), 404
-    import json
     meta = json.loads(meta_file.read_text())
+    result = meta.get("result") or {}
+    if "history" not in result:
+        history_path = None
+        tcn_path = meta.get("tcn_path")
+        if tcn_path:
+            history_path = Path(tcn_path) / "train_history.json"
+        elif (meta.get("artifacts") or {}).get("tcn_history"):
+            history_path = Path(meta["artifacts"]["tcn_history"])
+
+        if history_path is not None:
+            result["history"] = load_tcn_history(history_path)
+            meta["result"] = result
+
+    if "evaluation" not in result:
+        ag_path = meta.get("ag_path")
+        if ag_path:
+            result["evaluation"] = load_ag_evaluation_data(Path(ag_path))
+            meta["result"] = result
     return jsonify(meta)
 
 @api.route("/tcn-models", methods=["GET"])
 def get_tcn_models():
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
     from .training_service import list_available_tcn_models
 
     models = list_available_tcn_models()

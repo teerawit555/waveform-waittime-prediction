@@ -1,14 +1,90 @@
-import { ChangeEvent, useEffect, useMemo, useState } from 'react';
+﻿import { ChangeEvent, FormEvent, Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Activity, BrainCircuit, FileUp, Search, Sparkles, Waves, X } from 'lucide-react';
-import { getJob, getModels, startPredict, startTrain, toFileUrl, uploadFile, UploadResponse, API_BASE, ModelItem } from './lib/api';
-import OverfittingCard from './components/OverfittingCard';
+import { Activity, ArrowRight, BookOpen, BrainCircuit, CheckCircle2, Database, FileCode2, FileUp, Home, KeyRound, LineChart, Lock, LogOut, PlayCircle, Rocket, Server, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, TerminalSquare, Waves } from 'lucide-react';
+import { getJob, getMlflowConfig, getMlflowModelRegistry, getModels, startPredict, startTrain, uploadFile, UploadResponse, API_BASE, ModelItem, MlflowInfo, MlflowModelRegistry } from './lib/api';
 import StatCard from './components/StatCard';
-import PlotCard from './components/PlotCard';
 import DataTable from './components/DataTable';
+import { formatModelName, getModelNote, shouldHideModel } from './lib/modelDisplay';
+
+const FeatureImportanceSection = lazy(() => import('./components/FeatureImportanceSection'));
+const ModelRegistrySection = lazy(() => import('./components/ModelRegistrySection'));
+const PredictionWorkspace = lazy(() => import('./components/PredictionWorkspace'));
+const TrainingStatusSection = lazy(() => import('./components/TrainingStatusSection'));
+const WaveformGallery = lazy(() => import('./components/WaveformGallery'));
+const WorkflowSection = lazy(() => import('./components/WorkflowSection'));
+
+type WorkspaceView = 'home' | 'prediction' | 'training' | 'registry' | 'workflow';
+type TrainingPresetKey = 'fast' | 'balanced' | 'best';
+
+const DEFAULT_MODEL_NAME = 'TCN_aug_weighted_v1';
+const ADMIN_ONLY_VIEWS = new Set<WorkspaceView>(['registry', 'workflow']);
+const workspaceViews: WorkspaceView[] = ['home', 'prediction', 'training', 'registry', 'workflow'];
+const trainingPresets: Record<TrainingPresetKey, {
+  title: string;
+  description: string;
+  epochs: number;
+  batchSize: number;
+  learningRate: number;
+  embeddingDim: number;
+  earlyStoppingPatience: number;
+  timeLimit: number;
+  agPresets: string;
+  tcnAugment: boolean;
+}> = {
+  fast: {
+    title: 'Fast Check',
+    description: 'Short run for pipeline validation.',
+    epochs: 12,
+    batchSize: 96,
+    learningRate: 0.0012,
+    embeddingDim: 48,
+    earlyStoppingPatience: 3,
+    timeLimit: 120,
+    agPresets: 'medium_quality',
+    tcnAugment: false,
+  },
+  balanced: {
+    title: 'Balanced',
+    description: 'Default quality and runtime tradeoff.',
+    epochs: 30,
+    batchSize: 64,
+    learningRate: 0.001,
+    embeddingDim: 64,
+    earlyStoppingPatience: 5,
+    timeLimit: 300,
+    agPresets: 'good_quality',
+    tcnAugment: true,
+  },
+  best: {
+    title: 'Best Quality',
+    description: 'Longer run for candidate models.',
+    epochs: 60,
+    batchSize: 48,
+    learningRate: 0.0008,
+    embeddingDim: 96,
+    earlyStoppingPatience: 8,
+    timeLimit: 900,
+    agPresets: 'best_quality',
+    tcnAugment: true,
+  },
+};
+
+function getInitialWorkspaceView(): WorkspaceView {
+  const stored = localStorage.getItem('workspaceView') as WorkspaceView | null;
+  return stored && workspaceViews.includes(stored) ? stored : 'home';
+}
+
+function getModelNameFromPath(path?: string | null): string {
+  if (!path) return '';
+  const parts = String(path).split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || '';
+}
 
 function App() {
+  const [activeView, setActiveView] = useState<WorkspaceView>(getInitialWorkspaceView);
   const [dataset, setDataset] = useState<UploadResponse | null>(null);
+  const [trainingSource, setTrainingSource] = useState<'upload' | 'split'>('split');
+  const [existingSplitDir, setExistingSplitDir] = useState('data/split_noise_10000/splits');
   const [uploading, setUploading] = useState(false);
   const [targetCol, setTargetCol] = useState('wait_time_ms');
   const [idCol, setIdCol] = useState('wave_id');
@@ -18,6 +94,15 @@ function App() {
   const [learningRate, setLearningRate] = useState(0.001);
   const [embeddingDim, setEmbeddingDim] = useState(64);
   const [fastMs, setFastMs] = useState(0.1);
+  const [fastWeight, setFastWeight] = useState(1);
+  const [timeLimit, setTimeLimit] = useState(300);
+  const [agPresets, setAgPresets] = useState('medium_quality');
+  const [tcnAugment, setTcnAugment] = useState(false);
+  const [tcnNoiseStd, setTcnNoiseStd] = useState(0.015);
+  const [tcnScaleJitter, setTcnScaleJitter] = useState(0.04);
+  const [tcnTimeShift, setTcnTimeShift] = useState(8);
+  const [earlyStoppingPatience, setEarlyStoppingPatience] = useState(5);
+  const [trainingPreset, setTrainingPreset] = useState<TrainingPresetKey>('balanced');
   const [trainJobId, setTrainJobId] = useState<string | null>(
     () => localStorage.getItem('trainJobId'));
   const [trainJob, setTrainJob] = useState<any>(null);
@@ -27,6 +112,10 @@ function App() {
     () => localStorage.getItem('predictJobId'));
   const [predictJob, setPredictJob] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [adminToken, setAdminToken] = useState(() => localStorage.getItem('neurosettleAdminToken') || '');
+  const [adminTokenInput, setAdminTokenInput] = useState('');
+  const [adminLoginError, setAdminLoginError] = useState<string | null>(null);
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(() => Boolean(localStorage.getItem('neurosettleAdminToken')));
   const [gallerySearch, setGallerySearch] = useState('');
   const [searchedItem, setSearchedItem] = useState<any>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -34,7 +123,7 @@ function App() {
 
   const [modelName, setModelName] = useState('wave_model_v1');
   const [models, setModels] = useState<ModelItem[]>([]);
-  const [selectedModel, setSelectedModel] = useState(''); // predict
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_NAME); // predict
   const [selectedTrainModel, setSelectedTrainModel] = useState(''); // train
   const [modelsLoading, setModelsLoading] = useState(false);
   // Select model version 
@@ -42,21 +131,37 @@ function App() {
   const [tcnModels, setTcnModels] = useState<{ name: string; path: string; ready: boolean }[]>([]);
   const [selectedTCNModel, setSelectedTCNModel] = useState('');
   const [tcnModelsLoading, setTcnModelsLoading] = useState(false);
+  const [mlflowConfig, setMlflowConfig] = useState<MlflowInfo | null>(null);
+  const [modelRegistry, setModelRegistry] = useState<MlflowModelRegistry | null>(null);
+  const [modelRegistryLoading, setModelRegistryLoading] = useState(false);
   // features 
   const featureSummary = trainJob?.result?.feature_summary;
   const overfittingSummary = trainJob?.result?.overfitting_summary;
+  const jobMlflowInfo = trainJob?.result?.mlflow;
+  const mlflowInfo = (jobMlflowInfo?.run_id || jobMlflowInfo?.latest_run_id)
+    ? jobMlflowInfo
+    : (mlflowConfig ?? jobMlflowInfo);
+  const canConfigureTraining = trainingSource === 'split' || !!dataset;
+  const isTerminalJob = (job: any) => job?.status === 'completed' || job?.status === 'failed';
 
   // Load model when open web
   const fetchModels = async () => {
     try {
       setModelsLoading(true);
-      const res = await getModels();
-      const readyModels = (res.models || []).filter((m) => m.ready);
+      const res = await getModels(isAdminUnlocked ? adminToken : undefined);
+      const readyModels = (res.models || [])
+        .filter((m) => m.ready && !shouldHideModel(m.name))
+        .sort((a, b) => {
+          if (a.name === DEFAULT_MODEL_NAME) return -1;
+          if (b.name === DEFAULT_MODEL_NAME) return 1;
+          return formatModelName(a.name).localeCompare(formatModelName(b.name));
+        });
       setModels(readyModels);
 
-      if (!selectedModel && readyModels.length > 0) {
-        setSelectedModel(readyModels[0].name);
-      }
+      setSelectedModel((current) => {
+        if (current && readyModels.some((model) => model.name === current)) return current;
+        return readyModels.find((model) => model.name === DEFAULT_MODEL_NAME)?.name ?? readyModels[0]?.name ?? DEFAULT_MODEL_NAME;
+      });
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -67,19 +172,59 @@ function App() {
   const fetchTCNModels = async () => {
     try {
       setTcnModelsLoading(true);
-      const res = await fetch(`${API_BASE}/tcn-models`);
+      const res = await fetch(`${API_BASE}/tcn-models`, {
+        headers: adminToken ? { 'X-Admin-Token': adminToken } : undefined,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to fetch TCN models');
+      }
       const json = await res.json();
 
-      const readyModels = (json.data || []).filter((m: any) => m.ready);
+      const readyModels = (json.data || []).filter((m: any) => m.ready && !shouldHideModel(m.name));
       setTcnModels(readyModels);
 
-      if (!selectedTCNModel && readyModels.length > 0) {
-        setSelectedTCNModel(readyModels[0].name);
-      }
+      setSelectedTCNModel((current) => {
+        if (current && readyModels.some((model: any) => model.name === current)) return current;
+        return readyModels[0]?.name ?? '';
+      });
     } catch (err: any) {
       setError(err.message);
     } finally {
       setTcnModelsLoading(false);
+    }
+  };
+
+  const fetchMlflowConfig = async () => {
+    try {
+      const res = await getMlflowConfig();
+      setMlflowConfig(res);
+    } catch (err: any) {
+      setMlflowConfig({
+        enabled: false,
+        tracking_uri: '',
+        experiment_name: 'adaptive-wait-time',
+        reason: err.message,
+      });
+    }
+  };
+
+  const fetchModelRegistry = async () => {
+    try {
+      setModelRegistryLoading(true);
+      const res = await getMlflowModelRegistry(isAdminUnlocked ? adminToken : undefined);
+      setModelRegistry(res);
+    } catch (err: any) {
+      setModelRegistry({
+        enabled: false,
+        tracking_uri: '',
+        experiment_name: 'adaptive-wait-time',
+        registered_model_name: mlflowConfig?.registered_model_name || 'adaptive_wait_time_hybrid',
+        versions: [],
+        reason: err.message,
+      });
+    } finally {
+      setModelRegistryLoading(false);
     }
   };
 
@@ -89,13 +234,32 @@ function App() {
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/models/${modelName}`);
+      const res = await fetch(`${API_BASE}/models/${modelName}`, {
+        headers: adminToken ? { 'X-Admin-Token': adminToken } : undefined,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to load model');
+      }
       const data = await res.json();
+      const result = data.result ?? {};
+      let history = result.history;
+
+      if (!history?.length) {
+        const tcnModelName = data.tcn_name || getModelNameFromPath(data.tcn_path);
+        if (tcnModelName) {
+          const historyRes = await fetch(`${API_BASE}/files/tcn/${encodeURIComponent(tcnModelName)}/train_history.json`);
+          if (historyRes.ok) {
+            history = await historyRes.json();
+          }
+        }
+      }
+
       setTrainJob({
         status: 'completed',
         progress: 100,
         message: `Loaded model: ${modelName}`,
-        result: data.result,
+        result: { ...result, history, mlflow: data.mlflow },
       });
     } catch (err: any) {
       setError(err.message);
@@ -104,8 +268,27 @@ function App() {
 
 useEffect(() => {
   fetchModels();
+  fetchMlflowConfig();
+}, [isAdminUnlocked, adminToken]);
+
+useEffect(() => {
+  if (!isAdminUnlocked) {
+    setTcnModels([]);
+    setSelectedTCNModel('');
+    setModelRegistry(null);
+    if (ADMIN_ONLY_VIEWS.has(activeView)) setActiveView('home');
+    return;
+  }
+
   fetchTCNModels();
-}, []);
+  fetchModelRegistry();
+}, [isAdminUnlocked, adminToken]);
+
+useEffect(() => {
+  if (!isAdminUnlocked && ADMIN_ONLY_VIEWS.has(activeView)) {
+    setActiveView('home');
+  }
+}, [activeView, isAdminUnlocked]);
 
   const onDrop = async (acceptedFiles: File[]) => {
     const file = acceptedFiles[0];
@@ -130,36 +313,102 @@ useEffect(() => {
     multiple: false,
   });
 
+  const unlockAdminConsole = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const token = adminTokenInput.trim();
+    if (!token) {
+      setAdminLoginError('Enter the admin access key to open training controls.');
+      return;
+    }
+
+    localStorage.setItem('neurosettleAdminToken', token);
+    setAdminToken(token);
+    setAdminTokenInput('');
+    setAdminLoginError(null);
+    setIsAdminUnlocked(true);
+  };
+
+  const lockAdminConsole = () => {
+    localStorage.removeItem('neurosettleAdminToken');
+    setAdminToken('');
+    setAdminTokenInput('');
+    setAdminLoginError(null);
+    setIsAdminUnlocked(false);
+  };
+
+  const applyTrainingPreset = (presetKey: TrainingPresetKey) => {
+    const preset = trainingPresets[presetKey];
+    setTrainingPreset(presetKey);
+    setEpochs(preset.epochs);
+    setBatchSize(preset.batchSize);
+    setLearningRate(preset.learningRate);
+    setEmbeddingDim(preset.embeddingDim);
+    setEarlyStoppingPatience(preset.earlyStoppingPatience);
+    setTimeLimit(preset.timeLimit);
+    setAgPresets(preset.agPresets);
+    setTcnAugment(preset.tcnAugment);
+  };
+
   useEffect(() => {
     if (!trainJobId) return;
-    const interval = setInterval(async () => {
+    let cancelled = false;
+    let interval: number | undefined;
+
+    const pollTrainJob = async () => {
       try {
         const job = await getJob(trainJobId);
+        if (cancelled) return;
         setTrainJob(job);
-        if (job.status === 'completed' || job.status === 'failed') clearInterval(interval);
+        setError(null);
+        if (isTerminalJob(job)) {
+          if (interval) window.clearInterval(interval);
+          setTrainJobId(null);
+          localStorage.removeItem('trainJobId');
+        }
       } catch (err: any) {
-        clearInterval(interval);
-        setTrainJobId(null);
-        localStorage.removeItem('trainJobId');
+        if (!cancelled) {
+          setError(`Training status refresh failed: ${err.message}`);
+        }
       }
-    }, 1500);
-    return () => clearInterval(interval);
+    };
+
+    pollTrainJob();
+    interval = window.setInterval(pollTrainJob, 1500);
+    return () => {
+      cancelled = true;
+      if (interval) window.clearInterval(interval);
+    };
   }, [trainJobId]);
 
   useEffect(() => {
     if (!predictJobId) return;
-    const interval = setInterval(async () => {
+    let cancelled = false;
+    let interval: number | undefined;
+
+    const pollPredictJob = async () => {
       try {
         const job = await getJob(predictJobId);
+        if (cancelled) return;
         setPredictJob(job);
-        if (job.status === 'completed' || job.status === 'failed') clearInterval(interval);
+        setError(null);
+        if (isTerminalJob(job)) {
+          if (interval) window.clearInterval(interval);
+          setPredictJobId(null);
+          localStorage.removeItem('predictJobId');
+        }
       } catch (err: any) {
-        clearInterval(interval);
-        setPredictJobId(null);
-        localStorage.removeItem('predictJobId');
+        if (!cancelled) {
+          setError(`Prediction status refresh failed: ${err.message}`);
+        }
       }
-    }, 1500);
-    return () => clearInterval(interval);
+    };
+
+    pollPredictJob();
+    interval = window.setInterval(pollPredictJob, 1500);
+    return () => {
+      cancelled = true;
+      if (interval) window.clearInterval(interval);
+    };
   }, [predictJobId]);
 
   useEffect(() => {
@@ -173,7 +422,21 @@ useEffect(() => {
   }, [predictJobId]);
 
   const startTraining = async () => {
-    if (!dataset) return;
+    if (!isAdminUnlocked || !adminToken) {
+      setError('Admin access is required before starting a training job.');
+      return;
+    }
+
+    const useExistingSplit = trainingSource === 'split';
+    if (!dataset && !useExistingSplit) {
+      setError('Please upload a training CSV or use an existing split directory');
+      return;
+    }
+
+    if (useExistingSplit && !existingSplitDir.trim()) {
+      setError('Please enter split directory path');
+      return;
+    }
 
     if (!modelName.trim()) {
       setError('Please enter model name');
@@ -190,7 +453,8 @@ useEffect(() => {
       setTrainJob(null);
 
       const res = await startTrain({
-        dataset_path: dataset.dataset_path,
+        dataset_path: useExistingSplit ? null : dataset?.dataset_path,
+        split_dir: useExistingSplit ? existingSplitDir.trim() : null,
         target_col: targetCol,
         id_col: idCol,
         wave_prefix: wavePrefix,
@@ -199,12 +463,27 @@ useEffect(() => {
         lr: learningRate,
         embedding_dim: embeddingDim,
         fast_ms: fastMs,
+        fast_weight: fastWeight,
         model_name: modelName.trim(),
+        time_limit: timeLimit,
+        ag_presets: agPresets,
+        tcn_augment: tcnAugment,
+        tcn_noise_std: tcnNoiseStd,
+        tcn_scale_jitter: tcnScaleJitter,
+        tcn_time_shift: tcnTimeShift,
+        early_stopping_patience: earlyStoppingPatience,
 
         train_new_tcn: trainNewTCN,
         existing_tcn_name: trainNewTCN ? null : selectedTCNModel,
-      });
+      }, adminToken);
 
+      setTrainJob({
+        job_id: res.job_id,
+        job_type: 'train',
+        status: 'queued',
+        progress: 0,
+        message: 'Queued training job...',
+      });
       setTrainJobId(res.job_id);
     } catch (err: any) {
       setError(err.message);
@@ -215,6 +494,8 @@ useEffect(() => {
     if (trainJob?.status === 'completed') {
       fetchModels();
       fetchTCNModels();
+      fetchMlflowConfig();
+      fetchModelRegistry();
 
       if (trainJob?.result?.ag_model) {
         setSelectedModel(trainJob.result.ag_model);
@@ -259,22 +540,22 @@ useEffect(() => {
     }
   };
 
-  // ── derived data ──────────────────────────────────────────
+  // Derived data used by the dashboard sections.
   const trainMetrics   = trainJob?.result?.metrics ?? {};
   const predictPreview = predictJob?.result?.preview_predictions ?? [];
   const analysisItems  = predictJob?.result?.analysis_manifest
                       ?? trainJob?.result?.analysis_manifest
                       ?? [];
 
-  // total จาก backend (3000) — ถ้าไม่มีก็ใช้จำนวน items ที่มี (30)
+  // Prefer the backend total, then fall back to the loaded preview count.
   const totalWaves: number = predictJob?.result?.total_waves
                           ?? trainJob?.result?.total_waves
                           ?? analysisItems.length;
 
   const activeJobId: string | null = useMemo(() => {
-    // ลอง predictJobId ก่อนเลย — มีอยู่แน่ถ้ายังไม่ refresh
     if (predictJobId) return predictJobId;
-    // fallback: ดึงจาก image URL กรณี refresh หน้า
+
+    // Recover the job id from plot image URLs after a page refresh.
     const first = analysisItems[0];
     if (!first?.image) return null;
     const parts = String(first.image).split('/');
@@ -283,7 +564,7 @@ useEffect(() => {
     return null;
   }, [analysisItems, predictJobId]);
 
-  // 30 แรก เรียง 1, 2, 3 ... ตาม numeric sort
+  // Keep the first preview waves in numeric order when IDs contain numbers.
   const displayedAnalysis = useMemo(() => {
     return [...analysisItems].sort((a: any, b: any) => {
       const numA = parseInt(String(a.wave_id ?? '').replace(/\D/g, ''), 10);
@@ -296,18 +577,30 @@ useEffect(() => {
   const trainHistory = useMemo(() => {
     const history = trainJob?.result?.history;
     if (!history) return [];
-    return history.train_loss.map((_: number, index: number) => ({
+
+    if (Array.isArray(history)) {
+      return history.map((point: any, index: number) => ({
+        epoch: Number(point.epoch ?? index + 1),
+        train_loss: Number(point.train_loss ?? 0),
+        val_loss: Number(point.val_loss ?? point.valid_loss ?? 0),
+      }));
+    }
+
+    const trainLoss = Array.isArray(history.train_loss) ? history.train_loss : [];
+    const valLoss = Array.isArray(history.val_loss)
+      ? history.val_loss
+      : (Array.isArray(history.valid_loss) ? history.valid_loss : []);
+
+    return trainLoss.map((value: number, index: number) => ({
       epoch: index + 1,
-      train_loss: history.train_loss[index],
-      val_loss: history.val_loss[index],
+      train_loss: Number(value ?? 0),
+      val_loss: Number(valLoss[index] ?? 0),
     }));
   }, [trainJob]);
 
-  // ── on-demand search ──
-
   const handleWaveSearch = async () => {
     const q = gallerySearch.trim();
-    if (!q || !predictJobId) return;
+    if (!q || !activeJobId) return;
 
     setSearchLoading(true);
     setSearchError(null);
@@ -317,7 +610,7 @@ useEffect(() => {
       const res = await fetch(`${API_BASE}/plot-wave`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ wave_id: q, job_id: predictJobId }),  // ใช้ predictJobId ตรงๆ
+        body: JSON.stringify({ wave_id: q, job_id: activeJobId }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -338,409 +631,755 @@ useEffect(() => {
     setSearchError(null);
   };
 
-  // ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    localStorage.setItem('workspaceView', activeView);
+  }, [activeView]);
+
+  useEffect(() => {
+    const viewTitleMap: Record<WorkspaceView, string> = {
+      home: 'API Gateway',
+      prediction: 'Prediction',
+      training: 'Training',
+      registry: 'Models',
+      workflow: 'Workflow',
+    };
+    document.title = `NEUROSETTLE - ${viewTitleMap[activeView]}`;
+  }, [activeView]);
+
+  const trainStatusLabel = trainJob?.status
+    ? `${trainJob.status}${trainJob.progress != null ? ` / ${trainJob.progress}%` : ''}`
+    : 'Ready';
+  const predictStatusLabel = predictJob?.status
+    ? `${predictJob.status}${predictJob.progress != null ? ` / ${predictJob.progress}%` : ''}`
+    : 'Ready';
+  const bestModelLabel = modelRegistry?.best_version
+    ? `v${modelRegistry.best_version}`
+    : (selectedModel ? formatModelName(selectedModel) : 'None');
+  const selectedModelLabel = selectedModel ? formatModelName(selectedModel) : 'Not Selected';
+  const selectedTrainModelNote = getModelNote(selectedTrainModel);
+  const predictEndpoint = `${API_BASE}/predict`;
+  const adminStatusLabel = isAdminUnlocked ? 'Admin Unlocked' : 'Admin Locked';
+
   return (
-    <div className="page-shell">
-      <header className="hero">
-        <div className="hero-copy">
-          <div className="badge">
-            <Sparkles size={16} />
-            <span>TCN + AutoGluon Regression Pipeline</span>
+    <div className={`page-shell ${activeView === 'home' ? 'is-home' : ''}`}>
+      <header className="app-header">
+        <div className="brand-lockup">
+          <div className="brand-mark">
+            <img src="/adi_logo.png" alt="ADI logo" className="brand-logo" />
           </div>
-          <h1>TTR Tool AI QOET</h1>
-          <p className="hero-text">
-            Upload CSV files, train your waveform model, run predictions, inspect metrics,
-            and browse waveform analysis images from one clean dashboard.
-          </p>
-          <div className="hero-tags">
-            <span>TCN Embeddings</span>
-            <span>AutoGluon</span>
-            <span>Prediction Dashboard</span>
-            <span>Waveform Gallery</span>
+          <div>
+            <div className="eyebrow">TCN + AutoGluon Regression Pipeline</div>
+            <h1>NEUROSETTLE</h1>
           </div>
         </div>
-        <div className="hero-orb-wrap">
-          <div className="hero-orb" />
-          <div className="hero-orb hero-orb-small" />
+
+        <nav className="app-navbar" aria-label="Primary workspace navigation">
+          <button
+            type="button"
+            className={activeView === 'home' ? 'is-active' : ''}
+            onClick={() => setActiveView('home')}
+          >
+            <Home size={17} />
+            <span>Home</span>
+          </button>
+          <button
+            type="button"
+            className={activeView === 'prediction' ? 'is-active' : ''}
+            onClick={() => setActiveView('prediction')}
+          >
+            <PlayCircle size={17} />
+            <span>Prediction</span>
+          </button>
+          {isAdminUnlocked ? (
+            <>
+              <button
+                type="button"
+                className={activeView === 'training' ? 'is-active' : ''}
+                onClick={() => setActiveView('training')}
+              >
+                <BrainCircuit size={17} />
+                <span>Training</span>
+              </button>
+              <button
+                type="button"
+                className={activeView === 'registry' ? 'is-active' : ''}
+                onClick={() => setActiveView('registry')}
+              >
+                <Database size={17} />
+                <span>Models</span>
+              </button>
+              <button
+                type="button"
+                className={activeView === 'workflow' ? 'is-active' : ''}
+                onClick={() => setActiveView('workflow')}
+              >
+                <BookOpen size={17} />
+                <span>Workflow</span>
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className={activeView === 'training' ? 'is-active' : ''}
+              onClick={() => setActiveView('training')}
+            >
+              <KeyRound size={17} />
+              <span>Admin</span>
+            </button>
+          )}
+        </nav>
+
+        <div className="header-actions">
+          <div className="header-model-pill" title={selectedModel || undefined}>
+            <Sparkles size={15} />
+            <span>Default</span>
+            <strong>{selectedModelLabel}</strong>
+          </div>
+          {isAdminUnlocked ? (
+            <button type="button" className="header-auth-btn" onClick={lockAdminConsole}>
+              <LogOut size={15} />
+              <span>Lock</span>
+            </button>
+          ) : (
+            <button type="button" className="header-auth-btn" onClick={() => setActiveView('training')}>
+              <ShieldCheck size={15} />
+              <span>Admin Login</span>
+            </button>
+          )}
         </div>
       </header>
 
+      <div className="app-frame">
+        <div className="app-main">
+          {activeView !== 'home' ? (
+          <section className="workspace-strip">
+            <div className="workspace-summary">
+              <div>
+                <span>{isAdminUnlocked ? 'Train' : 'API'}</span>
+                <strong>{isAdminUnlocked ? trainStatusLabel : 'Ready'}</strong>
+              </div>
+              <div>
+                <span>Predict</span>
+                <strong>{predictStatusLabel}</strong>
+              </div>
+              <div>
+                <span>Ready Models</span>
+                <strong>{models.length}</strong>
+              </div>
+              <div>
+                <span>Best Model</span>
+                <strong title={selectedModel || undefined}>{bestModelLabel}</strong>
+              </div>
+            </div>
+          </section>
+          ) : null}
+
       {error ? <div className="error-banner">{error}</div> : null}
 
-      <div className="grid two">
-        <section className="card tall-card">
-          <label style={{ marginBottom: 16 }}>
-            <span>Load Existing Model</span>
-            <select
-              value={selectedTrainModel}
-              onChange={(e) => {
-                setSelectedTrainModel(e.target.value);
-                loadTrainResult(e.target.value);
-              }}
-              disabled={modelsLoading || models.length === 0}
-            >
-              <option value="">— Train new model —</option>
-              {models.map((m) => (
-                <option key={m.name} value={m.name}>{m.name}</option>
-              ))}
-            </select>
-          </label>
-          <div className="section-header">
-            <div className="section-title"><FileUp size={18} /><span>Training Dataset</span></div>
-          </div>
-          <div {...getRootProps()} className={`dropzone ${isDragActive ? 'active' : ''}`}>
-            <input {...getInputProps()} />
-            <Waves size={30} />
-            <div className="dropzone-title">
-              {uploading ? 'Uploading dataset...' : 'Drag and drop a CSV file here'}
-            </div>
-            <small>Or click to browse. Expected waveform columns: wave_0 to wave_999</small>
-          </div>
-          {dataset ? (
-            <>
-              <div className="grid four compact-gap">
-                <StatCard title="Rows" value={dataset.shape[0].toLocaleString()} />
-                <StatCard title="Columns" value={dataset.shape[1]} />
-                <StatCard title="Waves"   value={dataset.wave_count.toLocaleString() ?? 0} />
-                <StatCard title="Samples" value={dataset.sample_count ?? 0} />
+      {activeView === 'home' ? (
+        <main className="workspace-panel landing-page">
+          <section className="landing-hero">
+            <div className="landing-hero-copy">
+              <span className="landing-kicker"><ShieldCheck size={15} /> NEUROSETTLE ML Platform</span>
+              <h2>Predict settling time from raw data with confidence.</h2>
+              <p>
+                Run SPEA 2 inference through an API-ready workspace, inspect waveform-level
+                results, and keep training plus model operations protected for admins.
+              </p>
+              <div className="landing-actions">
+                <button type="button" className="primary-btn" onClick={() => setActiveView('prediction')}>
+                  <PlayCircle size={17} /><span>Start Prediction</span><ArrowRight size={16} />
+                </button>
+                <button type="button" className="ghost-btn" onClick={() => setActiveView('training')}>
+                  <Lock size={16} /><span>Admin Console</span>
+                </button>
               </div>
-              <div className="form-grid">
-                <label>
-                  <span>Training Mode</span>
-                  <select
-                    value={trainNewTCN ? 'new' : 'existing'}
-                    onChange={(e) => {
-                      const isNew = e.target.value === 'new';
-                      setTrainNewTCN(isNew);
-                      setError(null);
-                      if (isNew) {
-                        setSelectedTCNModel('');
-                      }
-                    }}
-                  >
-                    <option value="new">Train new TCN + AutoGluon</option>
-                    <option value="existing">Use existing TCN, train AutoGluon only</option>
-                  </select>
-                </label>
+            </div>
+          </section>
 
-                {!trainNewTCN && (
-                  <label>
-                    <span>Existing TCN Model</span>
-                    <select
-                      value={selectedTCNModel}
-                      onChange={(e) => setSelectedTCNModel(e.target.value)}
-                      disabled={tcnModelsLoading || tcnModels.length === 0}
-                    >
-                      {tcnModels.length === 0 ? (
-                        <option value="">
-                          {tcnModelsLoading ? 'Loading...' : 'No TCN models found'}
-                        </option>
-                      ) : (
-                        tcnModels.map((m) => (
-                          <option key={m.name} value={m.name}>
-                            {m.name}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  </label>
-                )}
-                <label><span>Model Name</span>
+          <section className="landing-surface-section">
+            <div className="surface-copy">
+              <span className="view-kicker">Live Surface</span>
+              <h2>API status, default model, and access mode in one operational strip.</h2>
+              <p>
+                The hero now stays focused on the product promise, while runtime state sits where API users and admins expect to scan it.
+              </p>
+            </div>
+            <div className="landing-product-panel" aria-label="NEUROSETTLE runtime summary">
+              <div className="product-panel-top">
+                <div>
+                  <span>Live Surface</span>
+                  <strong>Prediction Gateway</strong>
+                </div>
+                <CheckCircle2 size={18} />
+              </div>
+              <div className="product-panel-screen">
+                <div className="screen-row is-live">
+                  <Server size={16} />
+                  <span>POST /api/predict</span>
+                  <strong>Public</strong>
+                </div>
+                <div className="screen-row">
+                  <BrainCircuit size={16} />
+                  <span>{selectedModelLabel}</span>
+                  <strong>Default</strong>
+                </div>
+                <div className="screen-row">
+                  <Rocket size={16} />
+                  <span>{predictStatusLabel}</span>
+                  <strong>Inference</strong>
+                </div>
+              </div>
+              <div className="landing-hero-metrics">
+                <div>
+                  <span>Ready Models</span>
+                  <strong>{models.length}</strong>
+                </div>
+                <div>
+                  <span>Best Version</span>
+                  <strong>{bestModelLabel}</strong>
+                </div>
+                <div>
+                  <span>Admin</span>
+                  <strong>{adminStatusLabel}</strong>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="landing-api-panel">
+            <div className="landing-section-heading">
+              <span className="view-kicker">Developer Entry</span>
+              <h2>Prediction first, training protected.</h2>
+            </div>
+            <div className="landing-api-grid">
+              <article className="landing-api-copy">
+                <div className="landing-api-icon"><FileCode2 size={20} /></div>
+                <h3>Public inference workspace</h3>
+                <p>
+                  Upload waveform CSVs, select a ready model, run inference, and inspect waveform-level plots.
+                  This is the default path for API users and non-admin operators.
+                </p>
+                <button type="button" className="ghost-btn" onClick={() => setActiveView('prediction')}>
+                  <PlayCircle size={16} /><span>Run Prediction</span>
+                </button>
+              </article>
+              <article className="landing-code-card">
+                <div className="landing-code-head">
+                  <TerminalSquare size={18} />
+                  <span>API Quickstart</span>
+                </div>
+                <pre><code>{`POST ${predictEndpoint}
+Content-Type: application/json
+
+{
+  "dataset_path": "uploads/infer.csv",
+  "model_name": "${selectedModel || 'your_model_name'}",
+  "id_col": "wave_id",
+  "wave_prefix": "wave_"
+}`}</code></pre>
+              </article>
+            </div>
+          </section>
+
+          <section className="landing-capabilities">
+            <div className="landing-section-heading">
+              <span className="view-kicker">Workspace Map</span>
+              <h2>{isAdminUnlocked ? 'One product surface for admins and model review.' : 'A focused product surface for API users.'}</h2>
+            </div>
+            <div className="landing-feature-grid">
+              <button type="button" className="landing-feature-card" onClick={() => setActiveView('prediction')}>
+                <PlayCircle size={20} />
+                <span>Prediction</span>
+                <strong>Run API-facing inference and review outputs.</strong>
+              </button>
+              {isAdminUnlocked ? (
+                <>
+                  <button type="button" className="landing-feature-card" onClick={() => setActiveView('training')}>
+                    <BrainCircuit size={20} />
+                    <span>Admin Training</span>
+                    <strong>Start controlled TCN + AutoGluon training runs.</strong>
+                  </button>
+                  <button type="button" className="landing-feature-card" onClick={() => setActiveView('registry')}>
+                    <Database size={20} />
+                    <span>Models</span>
+                    <strong>Compare MLflow versions and candidate metrics.</strong>
+                  </button>
+                  <button type="button" className="landing-feature-card" onClick={() => setActiveView('workflow')}>
+                    <BookOpen size={20} />
+                    <span>Workflow</span>
+                    <strong>Trace the feature, TCN, and AutoGluon pipeline.</strong>
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="landing-feature-card landing-feature-card-wide" onClick={() => setActiveView('training')}>
+                  <KeyRound size={20} />
+                  <span>Admin Console</span>
+                  <strong>Unlock protected training, model registry, and workflow controls.</strong>
+                </button>
+              )}
+            </div>
+          </section>
+        </main>
+      ) : null}
+
+      {activeView === 'training' ? (
+        <main className="workspace-panel training-page">
+          <div className="view-heading">
+            <div>
+              <span className="view-kicker">Training Lab</span>
+              <h2>Build and evaluate waveform models</h2>
+            </div>
+            <div className="view-chip">
+              {isAdminUnlocked ? <ShieldCheck size={15} /> : <Lock size={15} />}
+              {isAdminUnlocked ? trainStatusLabel : 'Admin access required'}
+            </div>
+          </div>
+
+          {!isAdminUnlocked ? (
+            <section className="admin-gate">
+              <div className="admin-gate-copy">
+                <span className="landing-kicker"><KeyRound size={15} /> Admin Console</span>
+                <h2>Training is reserved for model owners.</h2>
+                <p>
+                  Prediction remains open for API users. Training creates new artifacts, updates model candidates,
+                  and can consume compute, so this console is separated behind an admin access key.
+                </p>
+                <div className="admin-gate-points">
+                  <span><ShieldCheck size={15} /> Backend train endpoint supports admin token enforcement</span>
+                  <span><Database size={15} /> Model registry opens only after admin unlock</span>
+                </div>
+              </div>
+              <form className="admin-login-card" onSubmit={unlockAdminConsole}>
+                <label>
+                  <span>Admin Access Key</span>
                   <input
-                    value={modelName}
-                    onChange={(e) => setModelName(e.target.value)}
-                    placeholder="e.g. wave_model_v2"
+                    type="password"
+                    value={adminTokenInput}
+                    onChange={(e) => {
+                      setAdminTokenInput(e.target.value);
+                      setAdminLoginError(null);
+                    }}
+                    placeholder="Enter training key"
+                    autoComplete="current-password"
                   />
                 </label>
-                {/* <label><span>ID Column</span>
-                  <select value={idCol} onChange={(e) => setIdCol(e.target.value)}>
-                    {dataset.columns.map((c) => <option key={c}>{c}</option>)}
-                  </select>
-                </label>
-                <label><span>Wave Prefix</span>
-                  <input value={wavePrefix} onChange={(e) => setWavePrefix(e.target.value)} />
-                </label> */}
-                <label><span>Fast Threshold (ms)</span>
-                  <input type="number" step="0.001" value={fastMs} onChange={(e) => setFastMs(Number(e.target.value))} />
-                </label>
-                <label><span>Epochs</span>
-                  <input type="number" value={epochs} onChange={(e) => setEpochs(Number(e.target.value))} />
-                </label>
-                <label><span>Batch Size</span>
-                  <input type="number" value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))} />
-                </label>
-                <label><span>Learning Rate</span>
-                  <input type="number" step="0.0001" value={learningRate} onChange={(e) => setLearningRate(Number(e.target.value))} />
-                </label>
-                <label><span>Embedding Dimension</span>
-                  <input type="number" value={embeddingDim} onChange={(e) => setEmbeddingDim(Number(e.target.value))} />
-                </label>
-              </div>
-              <button className="primary-btn" onClick={startTraining}>
-                <BrainCircuit size={16} /><span>Start Training</span>
-              </button>
-            </>
-          ) : null}
-        </section>
-
-        <section className="card tall-card">
-          <div className="section-header">
-            <div className="section-title"><Activity size={18} /><span>Dataset Preview</span></div>
-          </div>
-          {dataset
-            ? <DataTable rows={dataset.preview} />
-            : <div className="empty-state">Upload a dataset to see a preview table here.</div>
-          }
-        </section>
-      </div>
-
-      <section className="card">
-        <div className="section-header">
-          <div className="section-title"><Activity size={18} /><span>Training Status</span></div>
-        </div>
-        {trainJob ? (
-          <>
-            <div className="progress-wrap">
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${trainJob.progress ?? 0}%` }} />
-              </div>
-              <div className="muted small">{trainJob.message}</div>
-            </div>
-            {/* ── TCN Section ── */}
-            <div className="section-divider">
-              <span>TCN</span>
-            </div>
-            <div className="grid two compact-gap">
-              <PlotCard
-                title="Learning Curve"
-                imageUrl={toFileUrl(trainJob.result?.plots?.learning_curve)}
-              />
-              <OverfittingCard summary={overfittingSummary} />
-            </div>
-
-            {/* ── AutoGluon Section ── */}
-            <div className="section-divider">
-              <span>AutoGluon</span>
-            </div>
-            <div className="grid four compact-gap">
-              <StatCard title="MAE (All)"       value={Number(trainMetrics.mae_all        ?? 0).toFixed(6)} />
-              <StatCard title="RMSE"            value={Number(trainMetrics.rmse           ?? 0).toFixed(6)} />
-              <StatCard title="Fast Precision"  value={Number(trainMetrics.fast_precision ?? 0).toFixed(6)} />
-              <StatCard title="Fast Recall"     value={Number(trainMetrics.fast_recall    ?? 0).toFixed(6)} />
-            </div>
-            <div className="grid two compact-gap">
-              <PlotCard title="Loss Curve"          imageUrl={toFileUrl(trainJob.result?.plots?.loss_curve)} />
-              <PlotCard title="Actual vs Predicted" imageUrl={toFileUrl(trainJob.result?.plots?.actual_vs_pred)} />
-              <PlotCard title="Error Histogram"     imageUrl={toFileUrl(trainJob.result?.plots?.error_histogram)} />
-              <PlotCard title="Target Distribution" imageUrl={toFileUrl(trainJob.result?.plots?.target_distribution)} />
-            </div>
-
-            {trainHistory.length ? (
-              <div className="note-box">Training history detected: {trainHistory.length} epochs</div>
-            ) : null}
-            {trainJob.result?.results?.validation_predictions_csv ? (
-              <a className="ghost-btn" href={toFileUrl(trainJob.result.results.validation_predictions_csv)} target="_blank" rel="noreferrer">
-                Download Validation Predictions CSV
-              </a>
-            ) : null}
-          </>
-        ) : (
-          <div className="empty-state">No training job has been started yet.</div>
-        )}
-      </section>
-      {/* ── Feature Importance Analysis ── */}
-      <section className="card">
-        <div className="section-header">
-          <div className="section-title">
-            <Sparkles size={18} />
-            <span>Feature Importance Analysis</span>
-          </div>
-        </div>
-
-        {featureSummary ? (
-          <>
-            <div className="grid four compact-gap">
-              <StatCard title="Total Features" value={featureSummary.total_features ?? 0}/>
-              <StatCard title="Top-N Used" value={featureSummary.topn ?? 0}/>
-              <StatCard title="TCN (Top-30)" value={featureSummary.top30_count?.tcn_embedding ?? 0}/>
-              <StatCard title="Late Settle (Top-30)" value={featureSummary.top30_count?.late_settle ?? 0}/>
-            </div>
-
-            <div className="grid three compact-gap" style={{ marginTop: 12 }}>
-              <StatCard title="TCN Importance" value={Number(featureSummary.group_sum?.tcn_embedding ?? 0).toFixed(4)}/>
-              <StatCard title="Late Settle" value={Number(featureSummary.group_sum?.late_settle ?? 0).toFixed(4)}/>
-              <StatCard title="Other" value={Number(featureSummary.group_sum?.handcrafted_other ?? 0).toFixed(4)}/>
-            </div>
-
-            {/* ── Plots ── */}
-            <div className="grid two compact-gap " style={{ marginTop: 20 }}>
-              <PlotCard title="Feature Importance" imageUrl={toFileUrl(trainJob.result?.plots?.feature_importance)} />
-              <PlotCard title="Feature Group" imageUrl={toFileUrl(trainJob.result?.plots?.feature_group)} />
-              <PlotCard title="Feature Count" imageUrl={toFileUrl(trainJob.result?.plots?.feature_count)} />
-            </div>
-
-            {/* ── Interpretation ── */}
-            <div className="note-box">
-              <div className="note-title">Hybrid model detected</div>
-              <ul>
-                <li>TCN embeddings dominate representation</li>
-                <li>Late-settle features still influence prediction</li>
-                <li>Model learns both shape + timing behavior</li>
-              </ul>
-            </div>
-          </>
-        ) : (
-          <div className="empty-state">No feature analysis available yet.</div>
-        )}
-      </section>
-
-      <div className="grid two">
-        <section className="card tall-card">
-          <div className="section-header">
-            <div className="section-title"><BrainCircuit size={18} /><span>Predict New Dataset</span></div>
-          </div>
-          <label>
-            <span>Select Model</span>
-            <select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              disabled={modelsLoading || models.length === 0}
-            >
-              {models.length === 0 ? (
-                <option value="">{modelsLoading ? 'Loading...' : 'No models found'}</option>
-              ) : (
-                models.map((m) => (
-                  <option key={m.name} value={m.name}>{m.name}</option>
-                ))
-              )}
-            </select>
-          </label>
-          <label className="upload-inline">
-            <input type="file" accept=".csv" onChange={handlePredictFile} />
-            <span>{predictFile ? predictFile.name : 'Choose a CSV file for prediction'}</span>
-          </label>
-          {predictUpload ? (
-            <div className="muted">Prediction dataset ready: {predictUpload.shape[0]} rows</div>
-          ) : null}
-          <button className="primary-btn" onClick={runPredict} disabled={!predictUpload || !selectedModel}>
-            <span>Run Prediction</span>
-          </button>
-          {predictJob ? (
-            <div className="progress-wrap top-gap">
-              <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${predictJob.progress ?? 0}%` }} />
-              </div>
-              <div className="muted small">{predictJob.message}</div>
-            </div>
-          ) : null}
-          {predictJob?.result?.predictions_csv ? (
-            <a className="ghost-btn" href={toFileUrl(predictJob.result.predictions_csv)} target="_blank" rel="noreferrer">
-              Download Prediction CSV
-            </a>
-          ) : null}
-        </section>
-
-        <section className="card tall-card">
-          <div className="section-header">
-            <div className="section-title"><Activity size={18} /><span>Prediction Preview</span></div>
-          </div>
-          {predictPreview.length
-            ? <DataTable rows={predictPreview.slice(0, 20)} />
-            : <div className="empty-state">Prediction results will appear here after the job finishes.</div>
-          }
-        </section>
-      </div>
-
-      <section className="card">
-        <div className="section-header">
-          <div className="section-title"><Waves size={18} /><span>Waveform Analysis Gallery</span></div>
-        </div>
-
-        <p className="gallery-text">
-          Showing the first 30 waves by default. Search by wave_id to load any wave on demand.
-        </p>
-
-        {analysisItems.length > 0 && (
-          <div className="gallery-search-wrap">
-            <div className="gallery-search-input-wrap">
-              <Search size={14} />
-              <input
-                className="gallery-search"
-                type="text"
-                placeholder="e.g. 1000"
-                value={gallerySearch}
-                onChange={(e) => { setGallerySearch(e.target.value); setSearchedItem(null); setSearchError(null); }}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleWaveSearch(); }}
-              />
-            </div>
-
-            <button
-              className="primary-btn"
-              style={{ width: 'auto', padding: '9px 20px' }}
-              onClick={handleWaveSearch}
-              disabled={searchLoading || !gallerySearch.trim() || !predictJobId}
-            >
-              {searchLoading ? 'Loading…' : 'Search'}
-            </button>
-
-            {gallerySearch && (
-              <button className="gallery-search-clear" onClick={clearSearch}>
-                <X size={12} style={{ display: 'inline', marginRight: 4 }} />
-                Clear
-              </button>
-            )}
-
-            {/* แสดง totalWaves จาก backend (3000) ไม่ใช่ 30 */}
-            <span className="gallery-count">
-              <strong>{totalWaves}</strong> waves total
-            </span>
-          </div>
-        )}
-
-        {searchError && (
-          <div className="error-banner" style={{ marginBottom: 16 }}>{searchError}</div>
-        )}
-
-        {searchedItem && (
-          <div style={{ marginBottom: 24 }}>
-            <div className="note-box" style={{ marginBottom: 12 }}>
-              Search result for <strong>{searchedItem.wave_id}</strong>
-            </div>
-            <div className="analysis-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-              <div className="analysis-card">
-                <img src={toFileUrl(searchedItem.image)} alt={searchedItem.wave_id} />
-                <div className="analysis-meta">
-                  <strong>{searchedItem.wave_id}</strong>
-                  <span>Pred: {Number(searchedItem.pred ?? 0).toFixed(6)}</span>
-                  {searchedItem.true != null && (
-                    <span>True: {Number(searchedItem.true).toFixed(6)}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Default grid — 30 แรก เรียง 1, 2, 3 ... */}
-        <div className="analysis-grid">
-          {analysisItems.length === 0 ? (
-            <div className="empty-state">No waveform analysis images are available yet.</div>
+                {adminLoginError ? <div className="admin-login-error">{adminLoginError}</div> : null}
+                <button type="submit" className="primary-btn">
+                  <KeyRound size={16} /><span>Unlock Training</span>
+                </button>
+                <small>Set NEUROSETTLE_ADMIN_TOKEN on the backend before deploying.</small>
+              </form>
+            </section>
           ) : (
-            displayedAnalysis.map((item: any) => (
-              <div className="analysis-card" key={`${item.wave_id}-${item.image}`}>
-                <img src={toFileUrl(item.image)} alt={item.wave_id} />
-                <div className="analysis-meta">
-                  <strong>{item.wave_id}</strong>
-                  <span>Pred: {Number(item.pred ?? 0).toFixed(6)}</span>
-                  {item.true != null && (
-                    <span>True: {Number(item.true).toFixed(6)}</span>
-                  )}
-                </div>
+          <>
+          <section className="training-flow" aria-label="Training workflow steps">
+            <ol>
+            <li>
+              <span>01</span>
+              <div>
+                <strong>Dataset</strong>
+                <small>Choose split or upload CSV</small>
               </div>
-            ))
+            </li>
+            <li>
+              <span>02</span>
+              <div>
+                <strong>Model Setup</strong>
+                <small>Name the run and choose TCN strategy</small>
+              </div>
+            </li>
+            <li>
+              <span>03</span>
+              <div>
+                <strong>Train</strong>
+                <small>Tune essentials, then start pipeline</small>
+              </div>
+            </li>
+            <li>
+              <span>04</span>
+              <div>
+                <strong>Evaluate</strong>
+                <small>Review metrics, plots, and artifacts</small>
+              </div>
+            </li>
+            <li>
+              <span>05</span>
+              <div>
+                <strong>Registry</strong>
+                <small>Promote candidates and compare versions</small>
+              </div>
+            </li>
+            </ol>
+          </section>
+
+          <div className="admin-session-bar">
+            <span><ShieldCheck size={15} /> Admin training controls unlocked for this browser.</span>
+            <button type="button" className="ghost-btn" onClick={lockAdminConsole}>
+              <Lock size={15} /><span>Lock Console</span>
+            </button>
+          </div>
+
+          <div className="grid two training-grid">
+            <section className="card tall-card">
+              <label className="load-model-label">
+                <span>Load Existing Model</span>
+                <select
+                  value={selectedTrainModel}
+                  onChange={(e) => {
+                    setSelectedTrainModel(e.target.value);
+                    loadTrainResult(e.target.value);
+                  }}
+                  disabled={modelsLoading || models.length === 0}
+                >
+                  <option value="">-- Train new model --</option>
+                  {models.map((m) => (
+                    <option key={m.name} value={m.name}>{formatModelName(m.name)}</option>
+                  ))}
+                </select>
+                {selectedTrainModelNote ? <small className="model-note">{selectedTrainModelNote}</small> : null}
+              </label>
+              <div className="section-header">
+                <div className="section-title"><FileUp size={18} /><span className="step-number">01</span><span>Training Dataset</span></div>
+              </div>
+              <label>
+                <span>Training Source</span>
+                <select
+                  value={trainingSource}
+                  onChange={(e) => {
+                    setTrainingSource(e.target.value as 'upload' | 'split');
+                    setError(null);
+                  }}
+                >
+                  <option value="split">Use existing train/valid/test split</option>
+                  <option value="upload">Upload raw CSV and split automatically</option>
+                </select>
+              </label>
+
+              {trainingSource === 'split' ? (
+                <label>
+                  <span>Split Directory</span>
+                  <input
+                    value={existingSplitDir}
+                    onChange={(e) => setExistingSplitDir(e.target.value)}
+                    placeholder="data/split_noise_10000/splits"
+                  />
+                </label>
+              ) : (
+                <div {...getRootProps()} className={`dropzone ${isDragActive ? 'active' : ''}`}>
+                  <input {...getInputProps()} />
+                  <Waves size={30} />
+                  <div className="dropzone-title">
+                    {uploading ? 'Uploading dataset...' : 'Drag and drop a CSV file here'}
+                  </div>
+                  <small>Expected columns: wave_id, sample, time_ms, value, wait_time_ms</small>
+                </div>
+              )}
+
+              {dataset && trainingSource === 'upload' ? (
+                <div className="grid four compact-gap">
+                  <StatCard title="Rows" value={dataset.shape[0].toLocaleString()} />
+                  <StatCard title="Columns" value={dataset.shape[1]} />
+                  <StatCard title="Waves"   value={dataset.wave_count.toLocaleString() ?? 0} />
+                  <StatCard title="Samples" value={dataset.sample_count ?? 0} />
+                </div>
+              ) : null}
+
+              {canConfigureTraining ? (
+                <>
+                  <div className="config-stack">
+                    <div className="config-group">
+                      <div className="config-group-head">
+                        <div>
+                          <span className="config-title-line">
+                            <span className="step-number">02</span>
+                            <span className="config-group-title">Basic Setup</span>
+                          </span>
+                          <strong>Choose strategy and name this run</strong>
+                        </div>
+                        <Settings2 size={18} />
+                      </div>
+                      <div className="form-grid">
+                        <label>
+                          <span>Training Mode</span>
+                          <select
+                            value={trainNewTCN ? 'new' : 'existing'}
+                            onChange={(e) => {
+                              const isNew = e.target.value === 'new';
+                              setTrainNewTCN(isNew);
+                              setError(null);
+                              if (isNew) {
+                                setSelectedTCNModel('');
+                              }
+                            }}
+                          >
+                            <option value="new">Train new TCN + AutoGluon</option>
+                            <option value="existing">Use existing TCN, train AutoGluon only</option>
+                          </select>
+                        </label>
+
+                        {!trainNewTCN && (
+                          <label>
+                            <span>Existing TCN Model</span>
+                            <select
+                              value={selectedTCNModel}
+                              onChange={(e) => setSelectedTCNModel(e.target.value)}
+                              disabled={tcnModelsLoading || tcnModels.length === 0}
+                            >
+                              {tcnModels.length === 0 ? (
+                                <option value="">
+                                  {tcnModelsLoading ? 'Loading...' : 'No TCN models found'}
+                                </option>
+                              ) : (
+                                tcnModels.map((m) => (
+                                  <option key={m.name} value={m.name}>
+                                    {formatModelName(m.name)}
+                                  </option>
+                                ))
+                              )}
+                            </select>
+                            {getModelNote(selectedTCNModel) ? <small className="model-note">{getModelNote(selectedTCNModel)}</small> : null}
+                          </label>
+                        )}
+                        <label><span>Model Name</span>
+                          <input
+                            value={modelName}
+                            onChange={(e) => setModelName(e.target.value)}
+                            placeholder="e.g. wave_model_v2"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="preset-panel">
+                        <div className="preset-panel-head">
+                          <span>Quick Preset</span>
+                          <strong>Choose a reliable starting point, then override only when needed</strong>
+                        </div>
+                        <div className="preset-grid" role="group" aria-label="Training presets">
+                          {(Object.entries(trainingPresets) as [TrainingPresetKey, typeof trainingPresets[TrainingPresetKey]][]).map(([key, preset]) => (
+                            <button
+                              key={key}
+                              type="button"
+                              className={`preset-option ${trainingPreset === key ? 'is-active' : ''}`}
+                              onClick={() => applyTrainingPreset(key)}
+                            >
+                              <span>{preset.title}</span>
+                              <strong>{preset.description}</strong>
+                              <small>{preset.epochs} epochs / {preset.agPresets.replace('_', ' ')}</small>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <details className="config-disclosure">
+                      <summary>
+                        <span className="config-summary-copy">
+                          <span className="config-title-line">
+                            <span className="step-number">03</span>
+                            <span className="config-disclosure-title">Training Overrides</span>
+                          </span>
+                          <strong>Optional knobs for expert tuning</strong>
+                        </span>
+                      </summary>
+                      <div className="form-grid">
+                        <label><span>Epochs</span>
+                          <input type="number" value={epochs} onChange={(e) => setEpochs(Number(e.target.value))} />
+                        </label>
+                        <label><span>Batch Size</span>
+                          <input type="number" value={batchSize} onChange={(e) => setBatchSize(Number(e.target.value))} />
+                        </label>
+                        <label><span>Learning Rate</span>
+                          <input type="number" step="0.0001" value={learningRate} onChange={(e) => setLearningRate(Number(e.target.value))} />
+                        </label>
+                        <label><span>Early Stop Patience</span>
+                          <input type="number" min="1" value={earlyStoppingPatience} onChange={(e) => setEarlyStoppingPatience(Number(e.target.value))} />
+                        </label>
+                        <label><span>Fast Threshold (ms)</span>
+                          <input type="number" step="0.001" value={fastMs} onChange={(e) => setFastMs(Number(e.target.value))} />
+                        </label>
+                        <label><span>Fast Weight</span>
+                          <input type="number" step="0.1" min="1" value={fastWeight} onChange={(e) => setFastWeight(Number(e.target.value))} />
+                        </label>
+                      </div>
+                    </details>
+
+                    <details className="config-disclosure">
+                      <summary>
+                        <span className="config-disclosure-title">Advanced Controls</span>
+                        <strong>TCN embedding, augmentation, and AutoGluon budget</strong>
+                      </summary>
+                      <div className="form-grid">
+                        <label><span>Embedding Dimension</span>
+                          <input type="number" value={embeddingDim} onChange={(e) => setEmbeddingDim(Number(e.target.value))} />
+                        </label>
+                        <label><span>AutoGluon Preset</span>
+                          <select value={agPresets} onChange={(e) => setAgPresets(e.target.value)}>
+                            <option value="medium_quality">medium_quality</option>
+                            <option value="good_quality">good_quality</option>
+                            <option value="high_quality">high_quality</option>
+                            <option value="best_quality">best_quality</option>
+                          </select>
+                        </label>
+                        <label><span>AutoGluon Time Limit (sec)</span>
+                          <input type="number" min="30" value={timeLimit} onChange={(e) => setTimeLimit(Number(e.target.value))} />
+                        </label>
+                        <label className={`checkbox-label ${tcnAugment ? 'is-checked' : ''}`}>
+                          <input
+                            type="checkbox"
+                            checked={tcnAugment}
+                            onChange={(e) => setTcnAugment(e.target.checked)}
+                          />
+                          <span className="checkbox-box" aria-hidden="true" />
+                          <span className="checkbox-copy">TCN augmentation</span>
+                        </label>
+                        {tcnAugment ? (
+                          <>
+                            <label><span>Aug Noise Std</span>
+                              <input type="number" step="0.001" min="0" value={tcnNoiseStd} onChange={(e) => setTcnNoiseStd(Number(e.target.value))} />
+                            </label>
+                            <label><span>Aug Scale Jitter</span>
+                              <input type="number" step="0.01" min="0" value={tcnScaleJitter} onChange={(e) => setTcnScaleJitter(Number(e.target.value))} />
+                            </label>
+                            <label><span>Aug Time Shift</span>
+                              <input type="number" min="0" value={tcnTimeShift} onChange={(e) => setTcnTimeShift(Number(e.target.value))} />
+                            </label>
+                          </>
+                        ) : null}
+                      </div>
+                    </details>
+                  </div>
+                  <button className="primary-btn" onClick={startTraining}>
+                    <SlidersHorizontal size={16} /><span>Start Training Pipeline</span>
+                  </button>
+                </>
+              ) : null}
+            </section>
+
+            <section className="card tall-card">
+              <div className="section-header">
+                <div className="section-title"><Activity size={18} /><b>Preview</b><span>Dataset Preview</span></div>
+              </div>
+              {dataset
+                ? <DataTable rows={dataset.preview} />
+                : (
+                  <div className="empty-state empty-action-state">
+                    <strong>Preview appears after upload</strong>
+                    <span>Upload mode shows a sample table here. Existing split mode trains directly from train.csv, valid.csv, and test.csv.</span>
+                    <button type="button" className="empty-state-action" onClick={() => setTrainingSource('upload')}>
+                      Switch to upload mode
+                    </button>
+                  </div>
+                )
+              }
+            </section>
+          </div>
+
+          <Suspense fallback={<div className="empty-state">Loading training analytics...</div>}>
+            <TrainingStatusSection
+              trainJob={trainJob}
+              mlflowInfo={mlflowInfo}
+              trainMetrics={trainMetrics}
+              trainHistory={trainHistory}
+              overfittingSummary={overfittingSummary}
+            />
+
+            <FeatureImportanceSection featureSummary={featureSummary} trainJob={trainJob} />
+          </Suspense>
+          </>
           )}
+        </main>
+      ) : null}
+
+      {activeView === 'prediction' ? (
+        <main className="workspace-panel prediction-page">
+          <div className="view-heading">
+            <div>
+              <span className="view-kicker">Prediction Workspace</span>
+              <h2>Run inference with a trained model</h2>
+            </div>
+            <div className="view-chip" title={selectedModel || undefined}><LineChart size={15} /> {selectedModel ? formatModelName(selectedModel) : 'No model selected'}</div>
+          </div>
+
+          <Suspense fallback={<div className="empty-state">Loading prediction workspace...</div>}>
+            <PredictionWorkspace
+              models={models}
+              modelsLoading={modelsLoading}
+              selectedModel={selectedModel}
+              setSelectedModel={setSelectedModel}
+              predictFile={predictFile}
+              handlePredictFile={handlePredictFile}
+              predictUpload={predictUpload}
+              runPredict={runPredict}
+              predictJob={predictJob}
+              predictPreview={predictPreview}
+            />
+
+            <WaveformGallery
+              analysisItems={analysisItems}
+              displayedAnalysis={displayedAnalysis}
+              totalWaves={totalWaves}
+              gallerySearch={gallerySearch}
+              setGallerySearch={(value) => {
+                setGallerySearch(value);
+                setSearchedItem(null);
+              }}
+              searchedItem={searchedItem}
+              searchLoading={searchLoading}
+              searchError={searchError}
+              predictJobId={activeJobId}
+              handleWaveSearch={handleWaveSearch}
+              clearSearch={clearSearch}
+              clearSearchError={() => setSearchError(null)}
+            />
+          </Suspense>
+        </main>
+      ) : null}
+
+      {activeView === 'registry' && isAdminUnlocked ? (
+        <main className="workspace-panel">
+          <div className="view-heading">
+            <div>
+              <span className="view-kicker">Models & Runs</span>
+              <h2>Compare registered model versions</h2>
+            </div>
+            <div className="view-chip"><Database size={15} /> {modelRegistry?.registered_model_name || 'Registry'}</div>
+          </div>
+
+          <Suspense fallback={<div className="empty-state">Loading model registry...</div>}>
+            <ModelRegistrySection
+              registry={modelRegistry}
+              loading={modelRegistryLoading}
+              onRefresh={() => {
+                fetchMlflowConfig();
+                fetchModelRegistry();
+              }}
+            />
+          </Suspense>
+        </main>
+      ) : null}
+
+      {activeView === 'workflow' && isAdminUnlocked ? (
+        <main className="workspace-panel">
+          <div className="view-heading">
+            <div>
+              <span className="view-kicker">Workflow</span>
+              <h2>Understand the hybrid ML pipeline</h2>
+            </div>
+            <div className="view-chip"><BookOpen size={15} /> Method Notes</div>
+          </div>
+
+          <Suspense fallback={<div className="empty-state">Loading workflow...</div>}>
+            <WorkflowSection />
+          </Suspense>
+        </main>
+      ) : null}
         </div>
-      </section>
+      </div>
+
+      <footer className="app-footer">
+        <span>Developed by Teerawit Pongkunawut and Sukit Saelao.</span>
+      </footer>
     </div>
   );
 }

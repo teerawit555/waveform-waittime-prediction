@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from pandas.errors import ParserError
 
 # ============================================================
 # Config (minimal, mostly for windowing / robustness only)
@@ -29,6 +31,19 @@ CLIP_FEATS = [
 ]
 
 EPS = 1e-12
+
+
+def read_csv_robust(path: Path) -> pd.DataFrame:
+    for attempt in range(1, 4):
+        try:
+            return pd.read_csv(path, low_memory=False)
+        except (OSError, ParserError) as exc:
+            if attempt == 3:
+                print(f"[WARN] C CSV reader failed for {path}: {exc}")
+                print("[WARN] Retrying with pandas python engine; this is slower but more tolerant.")
+                return pd.read_csv(path, engine="python")
+            print(f"[WARN] CSV read failed on attempt {attempt}/3: {exc}")
+            time.sleep(2)
 
 
 # ============================================================
@@ -651,6 +666,30 @@ def regime_change_features(xN: np.ndarray, t: np.ndarray, dt_ms: float) -> dict:
 # ============================================================
 # IO helpers
 # ============================================================
+def signal_wide_to_long(df: pd.DataFrame, sample_col: str = "Signal", dt_ms: float = 0.01) -> pd.DataFrame | None:
+    if sample_col not in df.columns:
+        return None
+
+    value_cols = [col for col in df.columns if str(col).endswith(":")]
+    if not value_cols:
+        return None
+
+    samples = pd.to_numeric(df[sample_col], errors="raise").astype(int).to_numpy()
+    rows = []
+    for index, col in enumerate(value_cols, start=1):
+        name = str(col).rstrip(":")
+        numeric_part = "".join(filter(str.isdigit, name))
+        wave_id = int(numeric_part) if numeric_part else index
+        rows.append(pd.DataFrame({
+            "wave_id": wave_id,
+            "sample": samples,
+            "time_ms": np.round(samples * dt_ms, 6),
+            "value": pd.to_numeric(df[col], errors="raise").to_numpy(float),
+        }))
+
+    return pd.concat(rows, ignore_index=True).sort_values(["wave_id", "sample"]).reset_index(drop=True)
+
+
 def normalize_columns(
     df: pd.DataFrame,
     id_col: str,
@@ -667,6 +706,10 @@ def normalize_columns(
     }
     for c in rename_map:
         if c not in out.columns:
+            long_df = signal_wide_to_long(out)
+            if long_df is not None:
+                out = long_df
+                break
             raise KeyError(f"Missing required column: {c}")
     out = out.rename(columns=rename_map)
 
@@ -696,7 +739,7 @@ def main() -> None:
     out_path = Path(args.out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    raw = pd.read_csv(in_path)
+    raw = read_csv_robust(in_path)
     raw = normalize_columns(raw, args.id_col, args.sample_col, args.time_col, args.value_col)
 
     raw["sample"] = raw["sample"].astype(int)

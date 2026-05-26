@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import json
@@ -45,16 +45,44 @@ class WaveDataset(Dataset):
     y -> (N)
     """
 
-    def __init__(self, X: np.ndarray, y: np.ndarray,wave_id: np.ndarray):
+    def __init__(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        wave_id: np.ndarray,
+        sample_weight: np.ndarray | None = None,
+        augment: bool = False,
+        noise_std: float = 0.0,
+        scale_jitter: float = 0.0,
+        time_shift: int = 0,
+    ):
         self.X = torch.tensor(X, dtype=torch.float32).unsqueeze(1)  # (N,1,L)
         self.y = torch.tensor(y, dtype=torch.float32)
         self.wave_id = torch.tensor(wave_id)
+        if sample_weight is None:
+            sample_weight = np.ones(len(y), dtype=np.float32)
+        self.sample_weight = torch.tensor(sample_weight, dtype=torch.float32)
+        self.augment = augment
+        self.noise_std = float(noise_std)
+        self.scale_jitter = float(scale_jitter)
+        self.time_shift = int(time_shift)
 
     def __len__(self) -> int:
         return len(self.X)
 
     def __getitem__(self, idx: int):
-        return self.X[idx], self.y[idx], self.wave_id[idx]
+        x = self.X[idx].clone()
+        if self.augment:
+            if self.scale_jitter > 0:
+                scale = 1.0 + torch.empty(1).uniform_(-self.scale_jitter, self.scale_jitter).item()
+                x = x * scale
+            if self.noise_std > 0:
+                x = x + torch.randn_like(x) * self.noise_std
+            if self.time_shift > 0:
+                shift = int(torch.randint(-self.time_shift, self.time_shift + 1, (1,)).item())
+                if shift:
+                    x = torch.roll(x, shifts=shift, dims=-1)
+        return x, self.y[idx], self.wave_id[idx], self.sample_weight[idx]
 
 
 class Chomp1d(nn.Module):
@@ -221,23 +249,18 @@ def train_one_epoch(model, loader, optimizer, criterion, device: str) -> float:
     """
 
     model.train()
-
     total = 0.0
     count = 0
 
-    for xb, yb , _  in loader:
-
+    for xb, yb, _, wb in loader:
         xb = xb.to(device)
         yb = yb.to(device)
+        wb = wb.to(device)
 
         optimizer.zero_grad()
-
         pred, _ = model(xb)
-
-        loss = criterion(pred, yb)
-
+        loss = (criterion(pred, yb) * wb).mean()
         loss.backward()
-
         optimizer.step()
 
         total += float(loss.item()) * len(xb)
@@ -246,7 +269,7 @@ def train_one_epoch(model, loader, optimizer, criterion, device: str) -> float:
     return total / max(count, 1)
 
 
-def eval_one_epoch(model, loader, criterion, epoch: int, device: str) -> float:
+def eval_one_epoch(model, loader, criterion, epoch: int, device: str, log_target: bool) -> float:
     """
     Evaluate model on validation set.
     """
@@ -257,24 +280,24 @@ def eval_one_epoch(model, loader, criterion, epoch: int, device: str) -> float:
     count = 0
 
     with torch.no_grad():
-        for i, (xb, yb, _) in enumerate(loader):  # รับ 3 ค่า
+        for i, (xb, yb, _, _) in enumerate(loader):
 
             xb = xb.to(device)
             yb = yb.to(device)
 
             pred, _ = model(xb)
 
-            # แปลงกลับเป็นค่า real (ถ้าใช้ log target)
-            pred_real = torch.expm1(pred)
-            true_real = torch.expm1(yb)
+            # Convert back to real wait time when training with log target.
+            pred_real = torch.expm1(pred) if log_target else pred
+            true_real = torch.expm1(yb) if log_target else yb
 
-            # print แค่ครั้งเดียว (กัน log ระเบิด)
+            # Print one preview batch only, to keep the training log readable.
             if i == 0 and epoch == 1:
                 print("pred:", pred_real[:10].cpu().numpy())
                 print("true:", true_real[:10].cpu().numpy())
                 print("-----")
 
-            loss = criterion(pred, yb)
+            loss = criterion(pred, yb).mean()
 
             total += float(loss.item()) * len(xb)
             count += len(xb)
@@ -317,8 +340,10 @@ def plot_training_curve(history, out_dir: str) -> None:
 
     print(f"Saved learning curve to {save_path}")
 
+# Early Stop training
 
-# Prediction
+
+# Prediction : Legacy
 def predict(model, loader, device, out_dir, name="test"):
     model.eval()
 
@@ -327,7 +352,7 @@ def predict(model, loader, device, out_dir, name="test"):
     wave_ids = []
 
     with torch.no_grad():
-        for xb, yb, wid in loader:
+        for xb, yb, wid, _ in loader:
             xb = xb.to(device)
             yb = yb.to(device)
 
@@ -365,6 +390,22 @@ def predict(model, loader, device, out_dir, name="test"):
     print(f"Saved {save_path}") 
 
 
+def sample_weights(y_real: np.ndarray, fast_ms: float, fast_weight: float) -> np.ndarray:
+    weights = np.ones(len(y_real), dtype=np.float32)
+    if fast_ms > 0 and fast_weight > 1:
+        weights[y_real <= fast_ms] = float(fast_weight)
+    return weights
+
+
+def load_tensor(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    d = np.load(path)
+    X = d["X"].astype(np.float32)
+    y = d["y"].astype(np.float32)
+    wave_id = d["wave_id"].astype(np.int64)
+    mask = np.isfinite(y)
+    return X[mask], y[mask], wave_id[mask]
+
+
 def main() -> None:
 
     # command line arguments
@@ -372,6 +413,7 @@ def main() -> None:
 
     ap.add_argument("--waves", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--valid-waves", default=None)
 
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--batch-size", type=int, default=64)
@@ -392,6 +434,13 @@ def main() -> None:
     ap.add_argument("--valid-frac", type=float, default=0.2)
 
     ap.add_argument("--log-target", action="store_true")
+    ap.add_argument("--augment", action="store_true")
+    ap.add_argument("--noise-std", type=float, default=0.015)
+    ap.add_argument("--scale-jitter", type=float, default=0.04)
+    ap.add_argument("--time-shift", type=int, default=8)
+    ap.add_argument("--fast-ms", type=float, default=0.1)
+    ap.add_argument("--fast-weight", type=float, default=3.0)
+    ap.add_argument("--early-stopping-patience", type=int, default=8)
 
     args = ap.parse_args()
 
@@ -399,64 +448,51 @@ def main() -> None:
 
     os.makedirs(args.out, exist_ok=True)
 
-    # load waveform dataset
-    d = np.load(args.waves)
+    X, y, wave_id = load_tensor(args.waves)
 
-    X = d["X"].astype(np.float32)
-    y = d["y"].astype(np.float32)
-    wave_id = d["wave_id"].astype(np.int64)
-
-    # remove invalid targets
-    mask = np.isfinite(y)
-    X = X[mask]
-    y = y[mask]
-    wave_id = wave_id[mask]
-
-    # optional log transform of target
-    if args.log_target:
-        y_train_all = np.log1p(np.clip(y, 0.0, None))
+    if args.valid_waves:
+        X_valid, y_valid_real, wave_id_valid = load_tensor(args.valid_waves)
+        X_train, y_train_real, wave_id_train = X, y, wave_id
     else:
-        y_train_all = y.copy()
+        n = len(X)
+        idx = np.arange(n)
+        rng = np.random.default_rng(args.seed)
+        rng.shuffle(idx)
+        n_valid = int(round(n * float(args.valid_frac)))
+        valid_idx = idx[:n_valid]
+        train_idx = idx[n_valid:]
+        X_train, y_train_real, wave_id_train = X[train_idx], y[train_idx], wave_id[train_idx]
+        X_valid, y_valid_real, wave_id_valid = X[valid_idx], y[valid_idx], wave_id[valid_idx]
 
-    # split train / validation
-    n = len(X)
+    if args.log_target:
+        y_train = np.log1p(np.clip(y_train_real, 0.0, None))
+        y_valid = np.log1p(np.clip(y_valid_real, 0.0, None))
+    else:
+        y_train = y_train_real.copy()
+        y_valid = y_valid_real.copy()
 
-    idx = np.arange(n)
-
-    rng = np.random.default_rng(args.seed)
-    rng.shuffle(idx)
-
-    n_valid = int(round(n * float(args.valid_frac)))
-
-    valid_idx = idx[:n_valid]
-    train_idx = idx[n_valid:]
-
-    X_train, y_train = X[train_idx], y_train_all[train_idx]
-    X_valid, y_valid = X[valid_idx], y_train_all[valid_idx]
+    train_weight = sample_weights(y_train_real, args.fast_ms, args.fast_weight)
+    valid_weight = np.ones(len(y_valid), dtype=np.float32)
 
     # dataset FIX : add wave_id to get the pred data
     # train_ds = WaveDataset(X_train, y_train)
     # valid_ds = WaveDataset(X_valid, y_valid)
 
-    train_ds = WaveDataset(X_train, y_train, wave_id[train_idx])
-    valid_ds = WaveDataset(X_valid, y_valid, wave_id[valid_idx])
+    train_ds = WaveDataset(
+        X_train,
+        y_train,
+        wave_id_train,
+        sample_weight=train_weight,
+        augment=bool(args.augment),
+        noise_std=args.noise_std,
+        scale_jitter=args.scale_jitter,
+        time_shift=args.time_shift,
+    )
+    valid_ds = WaveDataset(X_valid, y_valid, wave_id_valid, sample_weight=valid_weight)
 
     # dataloader
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
     valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=False)
-
-    # ===== TEST LOADER =====
-    # d_test = np.load(args.test_waves)
-
-    # X_test = d_test["X"].astype(np.float32)
-    # y_test = d_test["y"].astype(np.float32)
-    # wave_id_test = d_test["wave_id"].astype(np.int64)
-
-    # if args.log_target:
-    #     y_test = np.log1p(np.clip(y_test, 0.0, None))
-
-    # test_ds = WaveDataset(X_test, y_test, wave_id_test)
-    # test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
 
     device = torch.device(args.device)
 
@@ -473,11 +509,12 @@ def main() -> None:
     )
 
     # regression loss
-    criterion = nn.SmoothL1Loss()
+    criterion = nn.SmoothL1Loss(reduction="none")
 
     best_val = float("inf")
     best_state = None
     history = []
+    epochs_without_improvement = 0
 
     # training loop
     for epoch in range(1, args.epochs + 1):
@@ -495,7 +532,8 @@ def main() -> None:
             valid_loader,
             criterion,
             epoch,
-            device
+            device,
+            bool(args.log_target),
         )
 
         history.append({
@@ -510,6 +548,12 @@ def main() -> None:
         if va < best_val:
             best_val = va
             best_state = {k: v.cpu() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= int(args.early_stopping_patience):
+                print(f"Early stopping at epoch={epoch} best_valid={best_val:.6f}")
+                break
 
     if best_state is None:
         raise RuntimeError("No best model state captured")
@@ -517,7 +561,7 @@ def main() -> None:
     model.load_state_dict(best_state)
 
     # === RUN TEST PREDICTION ===
-    #predict(model, test_loader, device, args.out, name="test")
+    # predict(model, test_loader, device, args.out, name="test")
 
     # save model checkpoint
     ckpt = {
@@ -525,6 +569,9 @@ def main() -> None:
         "embedding_dim": int(args.embedding_dim),
         "log_target": bool(args.log_target),
         "seed": int(args.seed),
+        "augment": bool(args.augment),
+        "fast_ms": float(args.fast_ms),
+        "fast_weight": float(args.fast_weight),
     }
 
     torch.save(ckpt, os.path.join(args.out, "tcn_encoder.pt"))
@@ -546,6 +593,14 @@ def main() -> None:
                 "embedding_dim": args.embedding_dim,
                 "seed": args.seed,
                 "log_target": bool(args.log_target),
+                "valid_waves": args.valid_waves,
+                "augment": bool(args.augment),
+                "noise_std": args.noise_std,
+                "scale_jitter": args.scale_jitter,
+                "time_shift": args.time_shift,
+                "fast_ms": args.fast_ms,
+                "fast_weight": args.fast_weight,
+                "early_stopping_patience": args.early_stopping_patience,
             },
             f,
             indent=2,

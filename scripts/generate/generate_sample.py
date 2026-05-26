@@ -1,4 +1,4 @@
-# scripts/generate_sample.py
+# scripts/generate/generate_sample.py
 """
 Generate synthetic training waveform data.
 
@@ -562,10 +562,11 @@ def iter_generation_plan(n_waves: int, ratios, rng: np.random.Generator):
 def main():
     ap = argparse.ArgumentParser("Generate synthetic waveform training data")
     ap.add_argument("--out",             default="data/raw/data_for_train.csv")
-    ap.add_argument("--n_waves",         type=int,   default=1000)
+    ap.add_argument("--n_waves", "--n-waves", type=int, default=1000)
     ap.add_argument("--dt_ms",           type=float, default=0.01)
     ap.add_argument("--t_end_ms",        type=float, default=9.9)
     ap.add_argument("--waves_per_flush", type=int,   default=10)
+    ap.add_argument("--seed",            type=int,   default=None)
     args = ap.parse_args()
 
     out_path = Path(args.out)
@@ -594,7 +595,7 @@ def main():
         generate_pulse_train_HARD,
     }
 
-    master_rng = np.random.default_rng(np.random.SeedSequence())
+    master_rng = np.random.default_rng(args.seed)
     gen_sequence = iter_generation_plan(args.n_waves, ratios, master_rng)
 
     print(f"Generating {args.n_waves} waves × {n_samples} samples = {args.n_waves*n_samples:,} rows")
