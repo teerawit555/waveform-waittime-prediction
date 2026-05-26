@@ -196,7 +196,7 @@ Content-Type: application/json
     },
     {
       label: 'Upload',
-      description: 'Select CSV or XLSX input',
+      description: 'Select CSV input',
       complete: Boolean(predictUpload),
       active: Boolean(selectedModel) && !predictUpload,
     },
@@ -263,10 +263,10 @@ Content-Type: application/json
 
             <div className="prediction-upload-column">
               <label className="upload-inline prediction-upload">
-                <input id="prediction-file-input" type="file" accept=".csv,.xlsx" onChange={handlePredictFile} />
+                <input id="prediction-file-input" type="file" accept=".csv,text/csv" onChange={handlePredictFile} />
                 <span>
                   <FileUp size={18} />
-                  {predictFile ? predictFile.name : 'Choose a CSV or XLSX file for prediction'}
+                  {predictFile ? predictFile.name : 'Choose a CSV file for prediction'}
                 </span>
               </label>
               {predictUpload ? (
@@ -314,11 +314,11 @@ Content-Type: application/json
           <dl className="prediction-docs-schema">
             <div>
               <dt>Input</dt>
-              <dd>CSV or XLSX waveform table</dd>
+              <dd>CSV waveform table</dd>
             </div>
             <div>
-              <dt>Required columns</dt>
-              <dd>wave_id, sample, time_ms, value</dd>
+              <dt>Schema</dt>
+              <dd>wave_id/sample/time_ms/value or Signal plus waveform columns</dd>
             </div>
             <div>
               <dt>Output</dt>
@@ -407,7 +407,7 @@ Content-Type: application/json
           : (
             <div className="empty-state empty-action-state">
               <strong>No prediction results yet</strong>
-              <span>Select a trained model, upload a CSV or XLSX file, then run prediction to preview wait_time_ms outputs here.</span>
+              <span>Select a trained model, upload a CSV file, then run prediction to preview wait_time_ms outputs here.</span>
               <button type="button" className="empty-state-action" onClick={openPredictionFilePicker}>
                 Choose prediction file
               </button>
