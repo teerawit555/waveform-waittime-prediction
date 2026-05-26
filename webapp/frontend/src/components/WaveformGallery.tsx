@@ -31,7 +31,7 @@ export default function WaveformGallery({
   clearSearchError,
 }: WaveformGalleryProps) {
   return (
-    <section className="card">
+    <section className="card waveform-gallery-card">
       <div className="section-header">
         <div className="section-title"><Waves size={18} /><span>Waveform Analysis Gallery</span></div>
       </div>
