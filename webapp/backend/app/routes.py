@@ -2,13 +2,34 @@ from __future__ import annotations
 
 import sys
 import json
+import time
+from collections import defaultdict, deque
 from hmac import compare_digest
 import pandas as pd
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request, send_from_directory
+from flask import Blueprint, current_app, jsonify, request, send_from_directory
+from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.utils import safe_join
 
-from .config import ADMIN_TOKEN, ANALYSIS_DIR, AUTOGLUON_DIR, DEFAULT_MODEL_NAME, PLOTS_DIR, RESULTS_DIR, TCN_DIR, UPLOAD_DIR
+from .config import (
+    ADMIN_TOKEN,
+    ANALYSIS_DIR,
+    AUTOGLUON_DIR,
+    DATA_DIR,
+    DEFAULT_MODEL_NAME,
+    IS_PRODUCTION,
+    PLOTS_DIR,
+    RATE_LIMIT_DEFAULT,
+    RATE_LIMIT_PREDICT,
+    RATE_LIMIT_TRAIN,
+    RATE_LIMIT_UPLOAD,
+    RATE_LIMIT_WINDOW_SECONDS,
+    RESULTS_DIR,
+    TCN_DIR,
+    TRAINING_ENABLED,
+    UPLOAD_DIR,
+)
 from .data_service import build_preview_from_file, save_uploaded_file
 from .job_queue import job_queue
 from .job_store import job_store
@@ -16,6 +37,115 @@ from .mlflow_service import get_mlflow_runtime_status, get_model_registry_summar
 from .training_service import PredictionService, TrainingService, run_cmd, SCRIPT_PATHS, list_available_models, load_ag_evaluation_data, load_tcn_history
 
 api = Blueprint("api", __name__)
+_rate_limit_hits: dict[tuple[str, str], deque[float]] = defaultdict(deque)
+
+
+def _client_ip() -> str:
+    return (request.access_route[0] if request.access_route else request.remote_addr) or "unknown"
+
+
+def _rate_limit_for_path(path: str) -> int:
+    if path.endswith("/upload"):
+        return RATE_LIMIT_UPLOAD
+    if path.endswith("/predict") or path.endswith("/plot-wave"):
+        return RATE_LIMIT_PREDICT
+    if path.endswith("/train"):
+        return RATE_LIMIT_TRAIN
+    return RATE_LIMIT_DEFAULT
+
+
+@api.before_request
+def apply_rate_limit():
+    if request.method == "OPTIONS" or request.endpoint == "api.health_check":
+        return None
+
+    limit = _rate_limit_for_path(request.path)
+    if limit <= 0:
+        return None
+
+    now = time.monotonic()
+    key = (_client_ip(), request.path)
+    hits = _rate_limit_hits[key]
+    while hits and now - hits[0] > RATE_LIMIT_WINDOW_SECONDS:
+        hits.popleft()
+
+    if len(hits) >= limit:
+        return jsonify({"error": "Too many requests. Please wait and try again."}), 429
+
+    hits.append(now)
+    return None
+
+
+@api.after_request
+def add_security_headers(response):
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+@api.errorhandler(RequestEntityTooLarge)
+def upload_too_large(_exc):
+    max_mb = current_app.config.get("MAX_UPLOAD_MB", "configured")
+    return jsonify({"error": f"Uploaded file is too large. Maximum size is {max_mb} MB."}), 413
+
+
+def _safe_path(base_dir: Path, filename: str) -> Path | None:
+    joined = safe_join(str(base_dir), filename)
+    if not joined:
+        return None
+    try:
+        path = Path(joined).resolve()
+        path.relative_to(base_dir.resolve())
+        return path
+    except ValueError:
+        return None
+
+
+def _json_payload() -> dict:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Expected a JSON object request body")
+    return payload
+
+
+def _resolve_uploaded_dataset(dataset_path: str | None) -> Path:
+    if not dataset_path:
+        raise ValueError("dataset_path is required")
+
+    path = Path(dataset_path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
+    try:
+        path.relative_to(UPLOAD_DIR.resolve())
+    except ValueError as exc:
+        raise ValueError("dataset_path must reference a file uploaded through /api/upload") from exc
+    if path.suffix.lower() != ".csv":
+        raise ValueError("Prediction dataset must be an uploaded CSV file")
+    if not path.exists():
+        raise ValueError("Uploaded dataset not found")
+    return path
+
+
+def _resolve_existing_split_dir(split_dir: str | None) -> Path | None:
+    if not split_dir:
+        return None
+
+    path = Path(split_dir)
+    if not path.is_absolute():
+        path = DATA_DIR.parent / path
+    path = path.resolve()
+    try:
+        path.relative_to(DATA_DIR.resolve())
+    except ValueError as exc:
+        raise ValueError("split_dir must be inside the project data directory") from exc
+
+    missing = [name for name in ("train.csv", "valid.csv", "test.csv") if not (path / name).exists()]
+    if missing:
+        raise ValueError(f"split_dir is missing required files: {', '.join(missing)}")
+    return path
 
 
 def _get_admin_token() -> str:
@@ -86,25 +216,55 @@ def start_train():
     if auth_error is not None:
         return auth_error
 
-    payload = request.get_json(force=True)
+    if not TRAINING_ENABLED:
+        message = "Training is disabled in this environment."
+        if IS_PRODUCTION:
+            message += " Set ENABLE_TRAINING=1 only on a protected admin server if training is required."
+        return jsonify({"error": message}), 403
+
+    try:
+        payload = _json_payload()
+        split_dir = _resolve_existing_split_dir(payload.get("split_dir"))
+        if split_dir is not None:
+            payload["split_dir"] = str(split_dir)
+        else:
+            dataset_path = _resolve_uploaded_dataset(payload.get("dataset_path"))
+            payload["dataset_path"] = str(dataset_path)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     job_id = TrainingService.start_training(payload)
     return jsonify({"job_id": job_id})
 
 
 @api.route("/predict", methods=["POST"])
 def start_predict():
-    payload = request.get_json(force=True)
+    try:
+        payload = _json_payload()
+        dataset_path = _resolve_uploaded_dataset(payload.get("dataset_path"))
+        payload["dataset_path"] = str(dataset_path)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     job_id = PredictionService.start_prediction(payload)
     return jsonify({"job_id": job_id})
 
 
 @api.route("/jobs", methods=["GET"])
 def list_jobs():
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
     return jsonify({"jobs": job_store.list_ids()})
 
 
 @api.route("/jobs/queue", methods=["GET"])
 def get_job_queue():
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
     return jsonify(job_queue.stats())
 
 
@@ -117,9 +277,13 @@ def get_job(job_id: str):
 
 @api.route("/files/analysis/<model_name>/<path:filename>", methods=["GET"])
 def serve_analysis(model_name: str, filename: str):
-    base_dir    = ANALYSIS_DIR / model_name
-    target_path = base_dir / filename
-    if not target_path.exists():
+    safe_model_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in model_name.strip()).strip("_")
+    if not safe_model_name:
+        return jsonify({"error": "Invalid model name"}), 400
+
+    base_dir = ANALYSIS_DIR / safe_model_name
+    target_path = _safe_path(base_dir, filename)
+    if target_path is None or not target_path.exists():
         return jsonify({"error": "File not found"}), 404
     return send_from_directory(base_dir, filename)
 
@@ -132,20 +296,22 @@ def serve_artifacts(category: str, job_id: str, filename: str):
     if category not in base_map:
         return jsonify({"error": "Invalid artifact category"}), 404
 
-    base_dir   = base_map[category]
-    target_dir = base_dir / Path(filename).parent
-    target_name = Path(filename).name
+    base_dir = base_map[category]
+    target_path = _safe_path(base_dir, filename)
 
-    if not (target_dir / target_name).exists():
+    if target_path is None or not target_path.exists():
         return jsonify({"error": "File not found"}), 404
 
-    return send_from_directory(target_dir, target_name)
+    return send_from_directory(base_dir, filename)
 
 
 @api.route("/plot-wave", methods=["POST"])
 def plot_wave_on_demand():
-    body = request.get_json(force=True)
-    print(f"DEBUG /plot-wave called: {body}")
+    try:
+        body = _json_payload()
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
     wave_id = (body.get("wave_id") or "").strip()
     job_id  = (body.get("job_id")  or "").strip()
 
@@ -268,9 +434,17 @@ def get_tcn_models():
 
 @api.route("/files/tcn/<model_name>/<path:filename>", methods=["GET"])
 def serve_tcn(model_name: str, filename: str):
-    base_dir = TCN_DIR / model_name
-    target   = base_dir / filename
-    if not target.exists():
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
+    safe_model_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in model_name.strip()).strip("_")
+    if not safe_model_name:
+        return jsonify({"error": "Invalid model name"}), 400
+
+    base_dir = TCN_DIR / safe_model_name
+    target = _safe_path(base_dir, filename)
+    if target is None or not target.exists():
         return jsonify({"error": "File not found"}), 404
     return send_from_directory(str(base_dir), filename)
 
