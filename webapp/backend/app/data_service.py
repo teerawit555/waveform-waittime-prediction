@@ -1,17 +1,33 @@
 from __future__ import annotations
 
 from pathlib import Path
+import uuid
 import pandas as pd
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
-SUPPORTED_UPLOAD_SUFFIXES = {".csv", ".xlsx"}
+SUPPORTED_UPLOAD_SUFFIXES = {".csv"}
+REQUIRED_WAVEFORM_COLUMNS = {"wave_id", "sample", "time_ms", "value"}
+WIDE_SIGNAL_COLUMNS = {"Signal"}
 
 
 def save_uploaded_file(file: FileStorage, upload_dir: Path) -> Path:
     upload_dir.mkdir(parents=True, exist_ok=True)
-    filename = secure_filename(file.filename or "uploaded.csv")
-    path = upload_dir / filename
+    original_name = secure_filename(file.filename or "")
+    if not original_name:
+        raise ValueError("Missing upload filename")
+
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in SUPPORTED_UPLOAD_SUFFIXES:
+        supported = ", ".join(sorted(SUPPORTED_UPLOAD_SUFFIXES))
+        raise ValueError(f"Unsupported file type '{suffix}'. Upload a {supported} file.")
+
+    filename = f"{Path(original_name).stem[:80]}_{uuid.uuid4().hex[:10]}{suffix}"
+    path = (upload_dir / filename).resolve()
+    upload_root = upload_dir.resolve()
+    if upload_root not in path.parents:
+        raise ValueError("Invalid upload path")
+
     file.save(path)
     return path
 
@@ -20,8 +36,6 @@ def read_tabular_file(path: Path) -> pd.DataFrame:
     suffix = path.suffix.lower()
     if suffix == ".csv":
         return pd.read_csv(path)
-    if suffix == ".xlsx":
-        return pd.read_excel(path)
     supported = ", ".join(sorted(SUPPORTED_UPLOAD_SUFFIXES))
     raise ValueError(f"Unsupported file type '{suffix}'. Supported files: {supported}")
 
@@ -119,5 +133,21 @@ def build_preview_from_csv(path: Path, chunksize: int = 200_000) -> dict:
 def build_preview_from_file(path: Path, chunksize: int = 200_000) -> dict:
     suffix = path.suffix.lower()
     if suffix == ".csv":
-        return build_preview_from_csv(path, chunksize=chunksize)
-    return build_preview(read_tabular_file(path))
+        preview = build_preview_from_csv(path, chunksize=chunksize)
+        validate_waveform_columns(preview["columns"])
+        return preview
+    raise ValueError(f"Unsupported file type '{suffix}'. Upload a CSV file.")
+
+
+def validate_waveform_columns(columns: list[str]) -> None:
+    column_set = set(columns)
+    has_long_schema = REQUIRED_WAVEFORM_COLUMNS.issubset(column_set)
+    has_wide_schema = WIDE_SIGNAL_COLUMNS.issubset(column_set) and any(str(col).endswith(":") for col in columns)
+    if has_long_schema or has_wide_schema:
+        return
+
+    required = ", ".join(sorted(REQUIRED_WAVEFORM_COLUMNS))
+    raise ValueError(
+        "Invalid waveform CSV schema. Use long format columns "
+        f"({required}) or wide signal format with Signal plus columns ending in ':'."
+    )
