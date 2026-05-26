@@ -17,7 +17,7 @@ type WorkspaceView = 'home' | 'prediction' | 'training' | 'registry' | 'workflow
 type TrainingPresetKey = 'fast' | 'balanced' | 'best';
 
 const DEFAULT_MODEL_NAME = 'TCN_aug_weighted_v1';
-const ADMIN_ONLY_VIEWS = new Set<WorkspaceView>(['registry', 'workflow']);
+const ADMIN_ONLY_VIEWS = new Set<WorkspaceView>(['registry']);
 const workspaceViews: WorkspaceView[] = ['home', 'prediction', 'training', 'registry', 'workflow'];
 const trainingPresets: Record<TrainingPresetKey, {
   title: string;
@@ -248,7 +248,9 @@ function App() {
       if (!history?.length) {
         const tcnModelName = data.tcn_name || getModelNameFromPath(data.tcn_path);
         if (tcnModelName) {
-          const historyRes = await fetch(`${API_BASE}/files/tcn/${encodeURIComponent(tcnModelName)}/train_history.json`);
+          const historyRes = await fetch(`${API_BASE}/files/tcn/${encodeURIComponent(tcnModelName)}/train_history.json`, {
+            headers: adminToken ? { 'X-Admin-Token': adminToken } : undefined,
+          });
           if (historyRes.ok) {
             history = await historyRes.json();
           }
@@ -646,6 +648,58 @@ useEffect(() => {
     document.title = `NEUROSETTLE - ${viewTitleMap[activeView]}`;
   }, [activeView]);
 
+  useEffect(() => {
+    const root = document.querySelector('.app-main');
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!root || reduceMotion) return undefined;
+
+    document.body.classList.add('reveal-motion-ready');
+
+    const revealSelector = [
+      '.workspace-panel > .view-heading',
+      '.workspace-panel > section',
+      '.landing-page > section',
+      '.prediction-workspace > section',
+      '.waveform-gallery-card',
+      '.landing-feature-card',
+      '.analysis-card',
+      '.card',
+    ].join(',');
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add('is-revealed');
+          observer.unobserve(entry.target);
+        });
+      },
+      { threshold: 0.12, rootMargin: '0px 0px -8% 0px' },
+    );
+
+    const registerRevealTargets = () => {
+      root.querySelectorAll(revealSelector).forEach((element, index) => {
+        if (!(element instanceof HTMLElement)) return;
+        if (element.classList.contains('scroll-reveal')) return;
+
+        element.classList.add('scroll-reveal');
+        element.style.setProperty('--reveal-delay', `${Math.min((index % 6) * 40, 200)}ms`);
+        observer.observe(element);
+      });
+    };
+
+    registerRevealTargets();
+
+    const mutationObserver = new MutationObserver(registerRevealTargets);
+    mutationObserver.observe(root, { childList: true, subtree: true });
+
+    return () => {
+      mutationObserver.disconnect();
+      observer.disconnect();
+      document.body.classList.remove('reveal-motion-ready');
+    };
+  }, []);
+
   const trainStatusLabel = trainJob?.status
     ? `${trainJob.status}${trainJob.progress != null ? ` / ${trainJob.progress}%` : ''}`
     : 'Ready';
@@ -667,9 +721,9 @@ useEffect(() => {
           <div className="brand-mark">
             <img src="/adi_logo.png" alt="ADI logo" className="brand-logo" />
           </div>
-          <div>
-            <div className="eyebrow">TCN + AutoGluon Regression Pipeline</div>
-            <h1>NEUROSETTLE</h1>
+          <div className="brand-wordmark">
+            <h1>Neurosettle</h1>
+            <span>ADI product workspace</span>
           </div>
         </div>
 
@@ -708,25 +762,16 @@ useEffect(() => {
                 <Database size={17} />
                 <span>Models</span>
               </button>
-              <button
-                type="button"
-                className={activeView === 'workflow' ? 'is-active' : ''}
-                onClick={() => setActiveView('workflow')}
-              >
-                <BookOpen size={17} />
-                <span>Workflow</span>
-              </button>
             </>
-          ) : (
-            <button
-              type="button"
-              className={activeView === 'training' ? 'is-active' : ''}
-              onClick={() => setActiveView('training')}
-            >
-              <KeyRound size={17} />
-              <span>Admin</span>
-            </button>
-          )}
+          ) : null}
+          <button
+            type="button"
+            className={activeView === 'workflow' ? 'is-active' : ''}
+            onClick={() => setActiveView('workflow')}
+          >
+            <BookOpen size={17} />
+            <span>Workflow</span>
+          </button>
         </nav>
 
         <div className="header-actions">
@@ -882,7 +927,7 @@ Content-Type: application/json
             </div>
           </section>
 
-          <section className="landing-capabilities">
+          <section className={`landing-capabilities ${isAdminUnlocked ? 'is-admin' : 'is-public'}`}>
             <div className="landing-section-heading">
               <span className="view-kicker">Workspace Map</span>
               <h2>{isAdminUnlocked ? 'One product surface for admins and model review.' : 'A focused product surface for API users.'}</h2>
@@ -912,11 +957,13 @@ Content-Type: application/json
                   </button>
                 </>
               ) : (
-                <button type="button" className="landing-feature-card landing-feature-card-wide" onClick={() => setActiveView('training')}>
-                  <KeyRound size={20} />
-                  <span>Admin Console</span>
-                  <strong>Unlock protected training, model registry, and workflow controls.</strong>
-                </button>
+                <>
+                  <button type="button" className="landing-feature-card" onClick={() => setActiveView('workflow')}>
+                    <BookOpen size={20} />
+                    <span>Workflow</span>
+                    <strong>Trace the feature, TCN, and AutoGluon pipeline.</strong>
+                  </button>
+                </>
               )}
             </div>
           </section>
@@ -1337,7 +1384,7 @@ Content-Type: application/json
       ) : null}
 
       {activeView === 'registry' && isAdminUnlocked ? (
-        <main className="workspace-panel">
+        <main className="workspace-panel registry-page">
           <div className="view-heading">
             <div>
               <span className="view-kicker">Models & Runs</span>
@@ -1359,8 +1406,8 @@ Content-Type: application/json
         </main>
       ) : null}
 
-      {activeView === 'workflow' && isAdminUnlocked ? (
-        <main className="workspace-panel">
+      {activeView === 'workflow' ? (
+        <main className="workspace-panel workflow-view">
           <div className="view-heading">
             <div>
               <span className="view-kicker">Workflow</span>
