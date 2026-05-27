@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Database, GitCompareArrows, RefreshCw } from 'lucide-react';
-import { MlflowModelRegistry, MlflowModelVersion } from '../lib/api';
+import { CheckCircle2, Database, GitCompareArrows, Images, RefreshCw, Trash2 } from 'lucide-react';
+import { MlflowModelRegistry, MlflowModelVersion, ModelAuditResponse, toFileUrl } from '../lib/api';
 import { formatModelName, getModelNote } from '../lib/modelDisplay';
 import StatCard from './StatCard';
 
@@ -8,7 +8,11 @@ type ModelRegistrySectionProps = {
   registry: MlflowModelRegistry | null;
   loading: boolean;
   onRefresh: () => void;
+  onDeleteModel: (modelName: string) => void;
+  onLoadModelAudit: (modelName: string) => Promise<ModelAuditResponse>;
 };
+
+const DEFAULT_MODEL_NAME = 'TCN_aug_weighted_v1';
 
 const metricLabels: Record<string, string> = {
   mae_all: 'MAE',
@@ -54,9 +58,17 @@ function formatRegistryName(name?: string | null) {
   return name.replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-export default function ModelRegistrySection({ registry, loading, onRefresh }: ModelRegistrySectionProps) {
+function getVersionModelName(version: MlflowModelVersion) {
+  return version.tags?.ag_model_name || version.version_tags?.ag_model_name || version.run_name || '';
+}
+
+export default function ModelRegistrySection({ registry, loading, onRefresh, onDeleteModel, onLoadModelAudit }: ModelRegistrySectionProps) {
   const versions = registry?.versions ?? [];
   const [selectedVersions, setSelectedVersions] = useState<string[]>([]);
+  const [auditModelName, setAuditModelName] = useState('');
+  const [auditData, setAuditData] = useState<ModelAuditResponse | null>(null);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!versions.length) {
@@ -104,8 +116,34 @@ export default function ModelRegistrySection({ registry, loading, onRefresh }: M
     });
   };
 
+  const openModelAudit = async (modelName: string) => {
+    if (!modelName) return;
+    setAuditModelName(modelName);
+    setAuditLoading(true);
+    setAuditError(null);
+    try {
+      const data = await onLoadModelAudit(modelName);
+      setAuditData(data);
+    } catch (err: any) {
+      setAuditData(null);
+      setAuditError(err.message || 'Failed to load model audit plots');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
   const bestVersion = registry?.best_version ? `v${registry.best_version}` : '-';
   const candidateVersion = registry?.candidate_version ? `v${registry.candidate_version}` : '-';
+  const registryMode = registry?.registry_backend === 'local' ? 'Local Artifact Registry' : 'MLflow-lite Registry';
+  const formatAuditMetric = (value: any) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric.toFixed(6) : '--';
+  };
+  const formatSignedAuditMetric = (value: any) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '--';
+    return `${numeric > 0 ? '+' : ''}${numeric.toFixed(6)}`;
+  };
 
   return (
     <section className="card model-registry-section">
@@ -132,13 +170,17 @@ export default function ModelRegistrySection({ registry, loading, onRefresh }: M
       ) : versions.length === 0 ? (
         <div className="empty-state empty-action-state">
           <strong>No model versions yet</strong>
-          <span>Train a model and register it in MLflow to create the first comparable version.</span>
+          <span>Train a model to create the first comparable version.</span>
           <button type="button" className="empty-state-action" onClick={onRefresh} disabled={loading}>
             Refresh registry
           </button>
         </div>
       ) : (
         <>
+          {registry.reason ? (
+            <div className="note-box registry-fallback-note">{registry.reason}</div>
+          ) : null}
+
           <div className="grid four compact-gap">
             <StatCard title="Registered Model" value={formatRegistryName(registry.registered_model_name)} />
             <StatCard title="Versions" value={registry.version_count ?? versions.length} />
@@ -149,7 +191,7 @@ export default function ModelRegistrySection({ registry, loading, onRefresh }: M
           <div className="registry-run-table-panel">
             <div className="registry-run-table-head">
               <div>
-                <span className="view-kicker">MLflow-lite Registry</span>
+                <span className="view-kicker">{registryMode}</span>
                 <h3>Scan model versions, run status, and deploy readiness</h3>
               </div>
               <span>{versions.length} version{versions.length === 1 ? '' : 's'}</span>
@@ -165,12 +207,15 @@ export default function ModelRegistrySection({ registry, loading, onRefresh }: M
                     <th>Fast Recall</th>
                     <th>Run</th>
                     <th>Updated</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {versions.map((version) => {
                     const isBest = registry.best_version === version.version;
                     const aliasLabel = version.aliases?.length ? version.aliases.join(', ') : version.status || version.current_stage || '-';
+                    const modelName = getVersionModelName(version);
+                    const isDefaultModel = modelName === DEFAULT_MODEL_NAME;
                     return (
                       <tr key={`registry-table-${version.version}`}>
                         <td>
@@ -183,6 +228,30 @@ export default function ModelRegistrySection({ registry, loading, onRefresh }: M
                         <td>{formatMetric(version.metrics?.fast_recall, 4)}</td>
                         <td className="mono truncate" title={version.run_id || undefined}>{compactRunId(version.run_id)}</td>
                         <td>{formatDate(version.updated_at || version.created_at)}</td>
+                        <td>
+                          <div className="registry-row-actions">
+                            <button
+                              type="button"
+                              className="registry-audit-btn"
+                              onClick={() => openModelAudit(modelName)}
+                              disabled={!modelName || auditLoading}
+                              title={modelName ? `View waveform audit for ${formatModelName(modelName)}` : 'Audit plots unavailable'}
+                            >
+                              <Images size={14} />
+                              <span>Audit</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="registry-delete-btn"
+                              onClick={() => onDeleteModel(modelName)}
+                              disabled={!modelName || isDefaultModel}
+                              title={isDefaultModel ? 'Default model cannot be deleted' : `Delete ${formatModelName(modelName)}`}
+                            >
+                              <Trash2 size={14} />
+                              <span>Delete</span>
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -190,6 +259,69 @@ export default function ModelRegistrySection({ registry, loading, onRefresh }: M
               </table>
             </div>
           </div>
+
+          {(auditLoading || auditError || auditData) ? (
+            <div className="registry-audit-panel">
+              <div className="registry-run-table-head">
+                <div>
+                  <span className="view-kicker">Waveform Audit</span>
+                  <h3>{auditModelName ? formatModelName(auditModelName) : 'Model audit plots'}</h3>
+                </div>
+                {auditData ? <span>{auditData.total_waves} waves total</span> : null}
+              </div>
+
+              {auditLoading ? (
+                <div className="empty-state">Generating audit plots...</div>
+              ) : auditError ? (
+                <div className="error-banner">{auditError}</div>
+              ) : auditData ? (
+                <>
+                  <div className="training-waveform-legend" aria-label="Waveform audit legend">
+                    <span><i className="legend-line is-waveform" /> Waveform</span>
+                    <span><i className="legend-line is-label" /> Label</span>
+                    <span><i className="legend-line is-prediction" /> Prediction</span>
+                  </div>
+                  <div className="training-waveform-grid registry-audit-grid">
+                    {auditData.analysis_manifest.map((item) => {
+                      const absError = item.abs_error ?? (
+                        item.pred != null && item.true != null ? Math.abs(Number(item.pred) - Number(item.true)) : null
+                      );
+
+                      return (
+                        <article className="training-waveform-card" key={`${item.wave_id}-${item.image}`}>
+                          <img src={toFileUrl(item.image)} alt={`Waveform ${item.wave_id}`} />
+                          <div className="training-waveform-meta">
+                            <div className="training-waveform-title">
+                              <Images size={15} />
+                              <strong>Wave {item.wave_id}</strong>
+                            </div>
+                            <div className="training-waveform-values">
+                              <div>
+                                <span>Label</span>
+                                <strong>{formatAuditMetric(item.true)}</strong>
+                              </div>
+                              <div>
+                                <span>Prediction</span>
+                                <strong>{formatAuditMetric(item.pred)}</strong>
+                              </div>
+                              <div>
+                                <span>Error</span>
+                                <strong>{formatSignedAuditMetric(item.error)}</strong>
+                              </div>
+                              <div>
+                                <span>Abs Error</span>
+                                <strong>{formatAuditMetric(absError)}</strong>
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="registry-layout">
             <div className="registry-version-list">
