@@ -382,12 +382,14 @@ def get_models():
         return jsonify({
             "default_model": DEFAULT_MODEL_NAME,
             "models": models,
+            "training_enabled": TRAINING_ENABLED,
         })
 
     default_models = [model for model in models if model.get("name") == DEFAULT_MODEL_NAME and model.get("ready")]
     return jsonify({
         "default_model": DEFAULT_MODEL_NAME,
         "models": default_models,
+        "training_enabled": TRAINING_ENABLED,
     })
 
 @api.route("/models/<model_name>", methods=["GET"])

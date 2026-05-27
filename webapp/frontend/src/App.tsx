@@ -1,10 +1,11 @@
-﻿import { ChangeEvent, FormEvent, Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Activity, ArrowRight, BookOpen, BrainCircuit, CheckCircle2, Database, FileCode2, FileUp, Home, KeyRound, LineChart, Lock, LogOut, PlayCircle, Rocket, Server, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, TerminalSquare, Waves } from 'lucide-react';
 import { getJob, getMlflowConfig, getMlflowModelRegistry, getModels, startPredict, startTrain, uploadFile, UploadResponse, API_BASE, ModelItem, MlflowInfo, MlflowModelRegistry } from './lib/api';
 import StatCard from './components/StatCard';
 import DataTable from './components/DataTable';
 import { formatModelName, getModelNote, shouldHideModel } from './lib/modelDisplay';
+import { HeroWaveformGraphic } from './components/HeroWaveformGraphic';
 
 const FeatureImportanceSection = lazy(() => import('./components/FeatureImportanceSection'));
 const ModelRegistrySection = lazy(() => import('./components/ModelRegistrySection'));
@@ -115,6 +116,7 @@ function App() {
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('neurosettleAdminToken') || '');
   const [adminTokenInput, setAdminTokenInput] = useState('');
   const [adminLoginError, setAdminLoginError] = useState<string | null>(null);
+  const [isAdminValidating, setIsAdminValidating] = useState(false);
   const [isAdminUnlocked, setIsAdminUnlocked] = useState(() => Boolean(localStorage.getItem('neurosettleAdminToken')));
   const [gallerySearch, setGallerySearch] = useState('');
   const [searchedItem, setSearchedItem] = useState<any>(null);
@@ -126,6 +128,7 @@ function App() {
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_NAME); // predict
   const [selectedTrainModel, setSelectedTrainModel] = useState(''); // train
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [isTrainingEnabled, setIsTrainingEnabled] = useState(true);
   // Select model version 
   const [trainNewTCN, setTrainNewTCN] = useState(true);
   const [tcnModels, setTcnModels] = useState<{ name: string; path: string; ready: boolean }[]>([]);
@@ -149,6 +152,10 @@ function App() {
     try {
       setModelsLoading(true);
       const res = await getModels(isAdminUnlocked ? adminToken : undefined);
+      
+      const trainingEnabled = res.training_enabled !== undefined ? res.training_enabled : true;
+      setIsTrainingEnabled(trainingEnabled);
+
       const readyModels = (res.models || [])
         .filter((m) => m.ready && !shouldHideModel(m.name))
         .sort((a, b) => {
@@ -162,6 +169,11 @@ function App() {
         if (current && readyModels.some((model) => model.name === current)) return current;
         return readyModels.find((model) => model.name === DEFAULT_MODEL_NAME)?.name ?? readyModels[0]?.name ?? DEFAULT_MODEL_NAME;
       });
+
+      // Auto-redirect if on training page but training is disabled
+      if (isAdminUnlocked && !trainingEnabled && activeView === 'training') {
+        setActiveView('registry');
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -176,6 +188,10 @@ function App() {
         headers: adminToken ? { 'X-Admin-Token': adminToken } : undefined,
       });
       if (!res.ok) {
+        if (res.status === 401) {
+          lockAdminConsole();
+          throw new Error('Your admin session has expired or is invalid. Please log in again.');
+        }
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to fetch TCN models');
       }
@@ -215,14 +231,19 @@ function App() {
       const res = await getMlflowModelRegistry(isAdminUnlocked ? adminToken : undefined);
       setModelRegistry(res);
     } catch (err: any) {
-      setModelRegistry({
-        enabled: false,
-        tracking_uri: '',
-        experiment_name: 'adaptive-wait-time',
-        registered_model_name: mlflowConfig?.registered_model_name || 'adaptive_wait_time_hybrid',
-        versions: [],
-        reason: err.message,
-      });
+      if (err.message?.includes('Admin access required')) {
+        lockAdminConsole();
+        setError('Your admin session has expired or is invalid. Please log in again.');
+      } else {
+        setModelRegistry({
+          enabled: false,
+          tracking_uri: '',
+          experiment_name: 'adaptive-wait-time',
+          registered_model_name: mlflowConfig?.registered_model_name || 'adaptive_wait_time_hybrid',
+          versions: [],
+          reason: err.message,
+        });
+      }
     } finally {
       setModelRegistryLoading(false);
     }
@@ -238,6 +259,10 @@ function App() {
         headers: adminToken ? { 'X-Admin-Token': adminToken } : undefined,
       });
       if (!res.ok) {
+        if (res.status === 401) {
+          lockAdminConsole();
+          throw new Error('Your admin session has expired or is invalid. Please log in again.');
+        }
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to load model');
       }
@@ -315,7 +340,7 @@ useEffect(() => {
     multiple: false,
   });
 
-  const unlockAdminConsole = (event: FormEvent<HTMLFormElement>) => {
+  const unlockAdminConsole = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const token = adminTokenInput.trim();
     if (!token) {
@@ -323,11 +348,30 @@ useEffect(() => {
       return;
     }
 
-    localStorage.setItem('neurosettleAdminToken', token);
-    setAdminToken(token);
-    setAdminTokenInput('');
+    setIsAdminValidating(true);
     setAdminLoginError(null);
-    setIsAdminUnlocked(true);
+    try {
+      const res = await fetch(`${API_BASE}/tcn-models`, {
+        headers: { 'X-Admin-Token': token },
+      });
+      if (!res.ok) {
+        if (res.status === 503) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Admin console is currently unavailable. Please make sure NEUROSETTLE_ADMIN_TOKEN is configured on the backend.');
+        }
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Invalid admin access key.');
+      }
+      localStorage.setItem('neurosettleAdminToken', token);
+      setAdminToken(token);
+      setAdminTokenInput('');
+      setAdminLoginError(null);
+      setIsAdminUnlocked(true);
+    } catch (err: any) {
+      setAdminLoginError(err.message || 'Validation failed. Please verify your token.');
+    } finally {
+      setIsAdminValidating(false);
+    }
   };
 
   const lockAdminConsole = () => {
@@ -661,6 +705,11 @@ useEffect(() => {
       '.landing-page > section',
       '.prediction-workspace > section',
       '.waveform-gallery-card',
+      '.workflow-page > .ml-pipeline-card',
+      '.workflow-page > .workflow-lifecycle',
+      '.workflow-page > .workflow-explanation',
+      '.workflow-lifecycle-grid > article',
+      '.workflow-explanation-grid > article',
       '.landing-feature-card',
       '.analysis-card',
       '.card',
@@ -677,6 +726,30 @@ useEffect(() => {
       { threshold: 0.12, rootMargin: '0px 0px -8% 0px' },
     );
 
+    const revealIfVisible = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      if (rect.top < viewportHeight + 120 && rect.bottom > -80) {
+        element.classList.add('is-revealed');
+        observer.unobserve(element);
+      }
+    };
+
+    const revealVisibleTargets = () => {
+      root.querySelectorAll('.scroll-reveal:not(.is-revealed)').forEach((element) => {
+        if (element instanceof HTMLElement) revealIfVisible(element);
+      });
+    };
+
+    let revealFrame: number | null = null;
+    const scheduleRevealCheck = () => {
+      if (revealFrame !== null) return;
+      revealFrame = window.requestAnimationFrame(() => {
+        revealFrame = null;
+        revealVisibleTargets();
+      });
+    };
+
     const registerRevealTargets = () => {
       root.querySelectorAll(revealSelector).forEach((element, index) => {
         if (!(element instanceof HTMLElement)) return;
@@ -686,14 +759,27 @@ useEffect(() => {
         element.style.setProperty('--reveal-delay', `${Math.min((index % 6) * 40, 200)}ms`);
         observer.observe(element);
       });
+      scheduleRevealCheck();
     };
 
     registerRevealTargets();
 
     const mutationObserver = new MutationObserver(registerRevealTargets);
     mutationObserver.observe(root, { childList: true, subtree: true });
+    window.addEventListener('scroll', scheduleRevealCheck, { passive: true });
+    window.addEventListener('resize', scheduleRevealCheck);
+
+    const revealFallback = window.setInterval(revealVisibleTargets, 250);
+    const stopRevealFallback = window.setTimeout(() => {
+      window.clearInterval(revealFallback);
+    }, 3000);
 
     return () => {
+      if (revealFrame !== null) window.cancelAnimationFrame(revealFrame);
+      window.clearInterval(revealFallback);
+      window.clearTimeout(stopRevealFallback);
+      window.removeEventListener('scroll', scheduleRevealCheck);
+      window.removeEventListener('resize', scheduleRevealCheck);
       mutationObserver.disconnect();
       observer.disconnect();
       document.body.classList.remove('reveal-motion-ready');
@@ -722,7 +808,7 @@ useEffect(() => {
             <img src="/adi_logo.png" alt="ADI logo" className="brand-logo" />
           </div>
           <div className="brand-wordmark">
-            <h1>Neurosettle</h1>
+            <h1>NEUROSETTLE</h1>
             <span>ADI product workspace</span>
           </div>
         </div>
@@ -746,14 +832,16 @@ useEffect(() => {
           </button>
           {isAdminUnlocked ? (
             <>
-              <button
-                type="button"
-                className={activeView === 'training' ? 'is-active' : ''}
-                onClick={() => setActiveView('training')}
-              >
-                <BrainCircuit size={17} />
-                <span>Training</span>
-              </button>
+              {isTrainingEnabled && (
+                <button
+                  type="button"
+                  className={activeView === 'training' ? 'is-active' : ''}
+                  onClick={() => setActiveView('training')}
+                >
+                  <BrainCircuit size={17} />
+                  <span>Training</span>
+                </button>
+              )}
               <button
                 type="button"
                 className={activeView === 'registry' ? 'is-active' : ''}
@@ -796,7 +884,7 @@ useEffect(() => {
 
       <div className="app-frame">
         <div className="app-main">
-          {activeView !== 'home' ? (
+          {activeView === 'training' ? (
           <section className="workspace-strip">
             <div className="workspace-summary">
               <div>
@@ -825,10 +913,16 @@ useEffect(() => {
         <main className="workspace-panel landing-page">
           <section className="landing-hero">
             <div className="landing-hero-copy">
+              {/* Commented out brand logo badge:
+              <div className="hero-brand-badge">
+                <img src="/neurosettle-icon.png" alt="NEUROSETTLE" className="hero-brand-logo" />
+                <span className="landing-kicker"><ShieldCheck size={15} /> ML Platform</span>
+              </div>
+              */}
               <span className="landing-kicker"><ShieldCheck size={15} /> NEUROSETTLE ML Platform</span>
               <h2>Predict settling time from raw data with confidence.</h2>
               <p>
-                Run SPEA 2 inference through an API-ready workspace, inspect waveform-level
+                Run NS 1.3 inference through an API-ready workspace, inspect waveform-level
                 results, and keep training plus model operations protected for admins.
               </p>
               <div className="landing-actions">
@@ -840,6 +934,12 @@ useEffect(() => {
                 </button>
               </div>
             </div>
+            <div className="landing-hero-visual">
+              {/* Commented out dynamic waveform graph:
+              <HeroWaveformGraphic />
+              */}
+              <img src="/neurosettle-logo.png" alt="NEUROSETTLE waveform prediction platform" className="hero-logo-card" loading="lazy" />
+            </div>
           </section>
 
           <section className="landing-surface-section">
@@ -847,7 +947,7 @@ useEffect(() => {
               <span className="view-kicker">Live Surface</span>
               <h2>API status, default model, and access mode in one operational strip.</h2>
               <p>
-                The hero now stays focused on the product promise, while runtime state sits where API users and admins expect to scan it.
+                Monitor your prediction gateway, active model, and access permissions from one unified dashboard.
               </p>
             </div>
             <div className="landing-product-panel" aria-label="NEUROSETTLE runtime summary">
@@ -940,11 +1040,13 @@ Content-Type: application/json
               </button>
               {isAdminUnlocked ? (
                 <>
-                  <button type="button" className="landing-feature-card" onClick={() => setActiveView('training')}>
-                    <BrainCircuit size={20} />
-                    <span>Admin Training</span>
-                    <strong>Start controlled TCN + AutoGluon training runs.</strong>
-                  </button>
+                  {isTrainingEnabled && (
+                    <button type="button" className="landing-feature-card" onClick={() => setActiveView('training')}>
+                      <BrainCircuit size={20} />
+                      <span>Admin Training</span>
+                      <strong>Start controlled TCN + AutoGluon training runs.</strong>
+                    </button>
+                  )}
                   <button type="button" className="landing-feature-card" onClick={() => setActiveView('registry')}>
                     <Database size={20} />
                     <span>Models</span>
@@ -997,7 +1099,7 @@ Content-Type: application/json
                   <span><Database size={15} /> Model registry opens only after admin unlock</span>
                 </div>
               </div>
-              <form className="admin-login-card" onSubmit={unlockAdminConsole}>
+               <form className="admin-login-card" onSubmit={unlockAdminConsole}>
                 <label>
                   <span>Admin Access Key</span>
                   <input
@@ -1009,11 +1111,13 @@ Content-Type: application/json
                     }}
                     placeholder="Enter training key"
                     autoComplete="current-password"
+                    disabled={isAdminValidating}
                   />
                 </label>
                 {adminLoginError ? <div className="admin-login-error">{adminLoginError}</div> : null}
-                <button type="submit" className="primary-btn">
-                  <KeyRound size={16} /><span>Unlock Training</span>
+                <button type="submit" className="primary-btn" disabled={isAdminValidating}>
+                  <KeyRound size={16} />
+                  <span>{isAdminValidating ? 'Verifying...' : 'Unlock Training'}</span>
                 </button>
                 <small>Set NEUROSETTLE_ADMIN_TOKEN on the backend before deploying.</small>
               </form>
@@ -1425,7 +1529,36 @@ Content-Type: application/json
       </div>
 
       <footer className="app-footer">
-        <span>Developed by Teerawit Pongkunawut and Sukit Saelao.</span>
+        <div className="footer-divider-glow"></div>
+        <div className="footer-container">
+          <div className="footer-brand-section">
+            <div className="footer-logo-lockup">
+              <img src="/neurosettle-icon.png" alt="NEUROSETTLE" className="footer-mini-logo" />
+              <div className="footer-brand-text">
+                <span className="footer-brand-name">NEUROSETTLE</span>
+                <span className="footer-brand-sub">Waveform Analytics Engine</span>
+              </div>
+            </div>
+            <p className="footer-description">
+              High-precision settling time prediction and analysis platform for ADI engineering workflows.
+            </p>
+          </div>
+
+          <div className="footer-meta-section">
+            <div className="footer-status-pills">
+              <span className="meta-pill">
+                <span>Inference Active</span>
+              </span>
+              <span className="meta-pill version">v1.3</span>
+              <span className="meta-pill environment">{isTrainingEnabled ? 'Local Workspace' : 'Production Hub'}</span>
+            </div>
+            
+            <div className="footer-credits">
+              <span>Developed by <strong>Teerawit Pongkunawut</strong> and <strong>Sukit Saelao</strong></span>
+              <span className="footer-copyright">© {new Date().getFullYear()} Analog Devices, Inc. All rights reserved.</span>
+            </div>
+          </div>
+        </div>
       </footer>
     </div>
   );

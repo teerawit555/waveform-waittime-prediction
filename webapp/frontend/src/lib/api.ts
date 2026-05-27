@@ -143,7 +143,7 @@ export async function getJob(jobId: string): Promise<JobResponse> {
   return data;
 }
 
-export async function getModels(adminToken?: string): Promise<{ models: ModelItem[]; default_model?: string }> {
+export async function getModels(adminToken?: string): Promise<{ models: ModelItem[]; default_model?: string; training_enabled?: boolean }> {
   const res = await fetch(`${API_BASE}/models`, {
     headers: adminHeaders(adminToken),
   });
