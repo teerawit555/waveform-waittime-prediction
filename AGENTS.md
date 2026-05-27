@@ -25,7 +25,7 @@ Prediction is intended to be public-facing. Training, model details, TCN model l
 
 - Keep the in-app ADI logo (`webapp/frontend/public/adi_logo.png`) as-is unless the user explicitly asks to change it.
 - NEUROSETTLE branding can be used for the browser title/favicon and project visuals.
-- The default prediction model is SPEA 2, backed by model name `TCN_aug_weighted_v1`.
+- The default prediction model is NS 1.3, backed by model name `TCN_aug_weighted_v1`.
 - Public users should primarily see and use Prediction.
 - Admin users can unlock Training, Models, and Workflow with `NEUROSETTLE_ADMIN_TOKEN`.
 - Do not expose model detail/registry endpoints publicly unless the user explicitly changes the product requirements.
@@ -37,7 +37,7 @@ Key files:
 - `webapp/frontend/src/App.tsx`: main application state, view switching, admin unlock state, landing page, training and prediction orchestration.
 - `webapp/frontend/src/styles.css`: global visual system and page/component styling.
 - `webapp/frontend/src/lib/api.ts`: frontend API helpers.
-- `webapp/frontend/src/lib/modelDisplay.ts`: user-facing model labels such as SPEA 2.
+- `webapp/frontend/src/lib/modelDisplay.ts`: user-facing model labels such as NS 1.3.
 - `webapp/frontend/src/components/PredictionWorkspace.tsx`: prediction UI.
 - `webapp/frontend/src/components/ModelRegistrySection.tsx`: admin model registry UI.
 - `webapp/frontend/src/components/WorkflowSection.tsx`: ML workflow explanation UI.
@@ -101,7 +101,7 @@ Public:
 - `POST /api/upload`
 - `POST /api/predict`
 - `GET /api/jobs/<job_id>`
-- `GET /api/models`, but public output should be limited to the default SPEA 2 model.
+- `GET /api/models`, but public output should be limited to the default NS 1.3 model.
 
 Admin-only:
 
@@ -121,10 +121,11 @@ Internal model names can be technical, but UI labels should be human-readable.
 
 Current important mapping:
 
-- `TCN_aug_weighted_v1` -> `SPEA 2`
-- `test_ml_flow` -> `SPEA 1`
-- `ag_1stage_hybrid_v1` -> `TMT 1`
-- `tcn_v1` -> `TMT 1 Encoder`
+- `TCN_aug_weighted_v1` -> `NS 1.3`
+- `test_ml_flow` -> `NS 1.2`
+- `wave_model_v_overfit_check` -> `NS 1.1`
+- `ag_1stage_hybrid_v1` -> `NS 1.0`
+- `tcn_v1` -> `NS 1.0 Encoder`
 
 Use `webapp/frontend/src/lib/modelDisplay.ts` for frontend labels and notes.
 
@@ -156,7 +157,7 @@ python -m py_compile webapp\backend\app\config.py webapp\backend\app\routes.py w
 
 For admin behavior changes, verify at least:
 
-- public `/api/models` returns only the default SPEA 2 model
+- public `/api/models` returns only the default NS 1.3 model
 - admin `/api/models` returns all ready models
 - public registry/model-detail/TCN endpoints return `401`
 - `/api/train` requires admin token

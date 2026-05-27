@@ -5,23 +5,23 @@ type ModelDisplayInfo = {
 
 const modelDisplayMap: Record<string, ModelDisplayInfo> = {
   ag_1stage_hybrid_v1: {
-    label: 'TMT 1',
+    label: 'NS 1.0',
     note: 'First clean-signal version without noise.',
   },
   tcn_v1: {
-    label: 'TMT 1 Encoder',
+    label: 'NS 1.0 Encoder',
     note: 'TCN encoder used by the first clean-signal version.',
   },
   wave_model_v_overfit_check: {
-    label: 'TMT 1.1',
-    note: 'Next version after TMT 1 with overfit checking.',
+    label: 'NS 1.1',
+    note: 'Next version after NS 1.0 with overfit checking.',
   },
   test_ml_flow: {
-    label: 'SPEA 1',
+    label: 'NS 1.2',
     note: 'Noise was added for model training and MLflow tracking is enabled.',
   },
   TCN_aug_weighted_v1: {
-    label: 'SPEA 2',
+    label: 'NS 1.3',
     note: 'Noise and augmentation were used during training, with MLflow tracking.',
   },
 };
