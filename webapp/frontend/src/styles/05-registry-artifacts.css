@@ -47,7 +47,7 @@
 
 .registry-run-table {
   width: 100%;
-  min-width: 820px;
+  min-width: 1020px;
   border-collapse: collapse;
   background: var(--white);
 }
@@ -88,6 +88,74 @@
   font-size: .58rem;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.registry-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.registry-audit-btn,
+.registry-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 9px;
+  color: var(--accent-error);
+  background: #fff5f5;
+  border: 1px solid rgba(255,77,93,.28);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-display);
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.registry-audit-btn {
+  color: var(--blue);
+  background: #eef8ff;
+  border-color: rgba(0,120,200,.24);
+}
+
+.registry-audit-btn:hover:not(:disabled) {
+  color: var(--navy);
+  background: #dff2ff;
+  border-color: rgba(0,120,200,.45);
+}
+
+.registry-delete-btn:hover:not(:disabled) {
+  color: #b91c1c;
+  background: #ffe8e8;
+  border-color: rgba(255,77,93,.55);
+}
+
+.registry-audit-btn:disabled,
+.registry-delete-btn:disabled {
+  color: var(--gray-400);
+  background: var(--gray-50);
+  border-color: var(--gray-100);
+  cursor: not-allowed;
+}
+
+.registry-audit-panel {
+  margin: 18px 0 0;
+  padding: 16px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+  border: 1px solid var(--gray-100);
+  border-radius: var(--radius-lg);
+}
+
+.registry-audit-panel .registry-run-table-head {
+  margin-bottom: 12px;
+}
+
+.registry-audit-grid {
+  margin-top: 4px;
 }
 
 .registry-version-list {
