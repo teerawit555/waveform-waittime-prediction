@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import json
 import time
+import shutil
 from collections import defaultdict, deque
 from hmac import compare_digest
 import pandas as pd
@@ -19,6 +20,8 @@ from .config import (
     DATA_DIR,
     DEFAULT_MODEL_NAME,
     IS_PRODUCTION,
+    MLFLOW_REGISTERED_MODEL_NAME,
+    MLFLOW_TRACKING_URI,
     PLOTS_DIR,
     RATE_LIMIT_DEFAULT,
     RATE_LIMIT_PREDICT,
@@ -34,7 +37,7 @@ from .data_service import build_preview_from_file, save_uploaded_file
 from .job_queue import job_queue
 from .job_store import job_store
 from .mlflow_service import get_mlflow_runtime_status, get_model_registry_summary, get_tracking_summary
-from .training_service import PredictionService, TrainingService, run_cmd, SCRIPT_PATHS, list_available_models, load_ag_evaluation_data, load_tcn_history
+from .training_service import PredictionService, TrainingService, build_analysis_manifest, run_cmd, SCRIPT_PATHS, list_available_models, load_ag_evaluation_data, load_tcn_history
 
 api = Blueprint("api", __name__)
 _rate_limit_hits: dict[tuple[str, str], deque[float]] = defaultdict(deque)
@@ -110,22 +113,18 @@ def _json_payload() -> dict:
     return payload
 
 
-def _resolve_uploaded_dataset(dataset_path: str | None) -> Path:
-    if not dataset_path:
-        raise ValueError("dataset_path is required")
+def _resolve_upload_id(upload_id: str | None) -> Path:
+    if not upload_id:
+        raise ValueError("upload_id is required")
+    safe_name = "".join(c for c in upload_id if c.isalnum() or c in ("-", "_", "."))
+    if not safe_name or safe_name != upload_id:
+        raise ValueError("Invalid upload_id format")
 
-    path = Path(dataset_path)
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    path = path.resolve()
-    try:
-        path.relative_to(UPLOAD_DIR.resolve())
-    except ValueError as exc:
-        raise ValueError("dataset_path must reference a file uploaded through /api/upload") from exc
-    if path.suffix.lower() != ".csv":
-        raise ValueError("Prediction dataset must be an uploaded CSV file")
-    if not path.exists():
+    path = UPLOAD_DIR / safe_name
+    if not path.exists() or not path.is_file():
         raise ValueError("Uploaded dataset not found")
+    if path.suffix.lower() != ".csv":
+        raise ValueError("Uploaded dataset must be a CSV file")
     return path
 
 
@@ -204,7 +203,7 @@ def upload_dataset():
     try:
         path = save_uploaded_file(file, UPLOAD_DIR)
         preview = build_preview_from_file(path)
-        preview["dataset_path"] = str(path)
+        preview["upload_id"] = path.name
         return jsonify(preview)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
@@ -228,7 +227,7 @@ def start_train():
         if split_dir is not None:
             payload["split_dir"] = str(split_dir)
         else:
-            dataset_path = _resolve_uploaded_dataset(payload.get("dataset_path"))
+            dataset_path = _resolve_upload_id(payload.get("upload_id"))
             payload["dataset_path"] = str(dataset_path)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -241,7 +240,7 @@ def start_train():
 def start_predict():
     try:
         payload = _json_payload()
-        dataset_path = _resolve_uploaded_dataset(payload.get("dataset_path"))
+        dataset_path = _resolve_upload_id(payload.get("upload_id"))
         payload["dataset_path"] = str(dataset_path)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -422,6 +421,221 @@ def get_model(model_name: str):
             result["evaluation"] = load_ag_evaluation_data(Path(ag_path))
             meta["result"] = result
     return jsonify(meta)
+
+def _safe_model_name(model_name: str) -> str:
+    return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in model_name.strip()).strip("_")
+
+
+def _delete_dir_inside(base_dir: Path, target: Path, deleted_paths: list[str]) -> None:
+    try:
+        resolved_base = base_dir.resolve()
+        resolved_target = target.resolve()
+        resolved_target.relative_to(resolved_base)
+    except ValueError as exc:
+        raise ValueError(f"Refusing to delete path outside {base_dir}") from exc
+
+    if resolved_target.exists():
+        shutil.rmtree(resolved_target)
+        deleted_paths.append(str(resolved_target))
+
+
+def _delete_mlflow_versions_for_model(model_name: str) -> list[str]:
+    deleted_versions: list[str] = []
+    try:
+        import mlflow
+        from mlflow.tracking import MlflowClient
+
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        client = MlflowClient()
+        versions = client.search_model_versions(f"name='{MLFLOW_REGISTERED_MODEL_NAME}'")
+        for version in versions:
+            version_tags = dict(getattr(version, "tags", {}) or {})
+            run_name = None
+            run_tags: dict[str, str] = {}
+            run_id = getattr(version, "run_id", None)
+            if run_id:
+                try:
+                    run = client.get_run(run_id)
+                    run_tags = dict(getattr(getattr(run, "data", None), "tags", {}) or {})
+                    run_name = run_tags.get("mlflow.runName")
+                except Exception:
+                    pass
+
+            linked_name = (
+                version_tags.get("ag_model_name")
+                or run_tags.get("ag_model_name")
+                or run_name
+                or ""
+            )
+            if linked_name == model_name:
+                client.delete_model_version(
+                    name=MLFLOW_REGISTERED_MODEL_NAME,
+                    version=str(getattr(version, "version")),
+                )
+                deleted_versions.append(str(getattr(version, "version")))
+    except Exception as exc:
+        print(f"[WARN] MLflow model version delete skipped/failed for {model_name}: {exc}")
+    return deleted_versions
+
+
+def _is_tcn_model_shared(tcn_path: Path, current_model_name: str) -> bool:
+    if not AUTOGLUON_DIR.exists():
+        return False
+
+    try:
+        target = tcn_path.resolve()
+    except Exception:
+        return False
+
+    for ag_dir in AUTOGLUON_DIR.iterdir():
+        if not ag_dir.is_dir() or ag_dir.name == current_model_name:
+            continue
+        meta_file = ag_dir / "model_meta.json"
+        if not meta_file.exists():
+            continue
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            other_tcn = Path(meta.get("tcn_path") or "").resolve()
+            if other_tcn == target:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+@api.route("/models/<model_name>", methods=["DELETE"])
+def delete_model(model_name: str):
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
+    safe_model_name = _safe_model_name(model_name)
+    if not safe_model_name or safe_model_name != model_name:
+        return jsonify({"error": "Invalid model name"}), 400
+
+    if safe_model_name == DEFAULT_MODEL_NAME:
+        return jsonify({"error": "Default model cannot be deleted"}), 400
+
+    ag_dir = AUTOGLUON_DIR / safe_model_name
+    meta_file = ag_dir / "model_meta.json"
+    if not ag_dir.exists():
+        return jsonify({"error": "Model not found"}), 404
+
+    meta = {}
+    if meta_file.exists():
+        try:
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        except Exception:
+            meta = {}
+
+    deleted_paths: list[str] = []
+    skipped_paths: list[str] = []
+
+    tcn_path = Path(meta.get("tcn_path") or (TCN_DIR / safe_model_name))
+    try:
+        if tcn_path.exists() and not _is_tcn_model_shared(tcn_path, safe_model_name):
+            _delete_dir_inside(TCN_DIR, tcn_path, deleted_paths)
+        elif tcn_path.exists():
+            skipped_paths.append(str(tcn_path))
+
+        _delete_dir_inside(AUTOGLUON_DIR, ag_dir, deleted_paths)
+        _delete_dir_inside(ANALYSIS_DIR, ANALYSIS_DIR / safe_model_name, deleted_paths)
+        _delete_dir_inside(ANALYSIS_DIR, ANALYSIS_DIR / f"feature_importance_{safe_model_name}", deleted_paths)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    deleted_versions = _delete_mlflow_versions_for_model(safe_model_name)
+
+    return jsonify({
+        "deleted": True,
+        "model_name": safe_model_name,
+        "deleted_paths": deleted_paths,
+        "skipped_paths": skipped_paths,
+        "deleted_mlflow_versions": deleted_versions,
+    })
+
+
+@api.route("/models/<model_name>/waveform-audit", methods=["POST"])
+def get_model_waveform_audit(model_name: str):
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
+    safe_model_name = _safe_model_name(model_name)
+    if not safe_model_name or safe_model_name != model_name:
+        return jsonify({"error": "Invalid model name"}), 400
+
+    ag_dir = AUTOGLUON_DIR / safe_model_name
+    meta_file = ag_dir / "model_meta.json"
+    if not meta_file.exists():
+        return jsonify({"error": "Model not found"}), 404
+    try:
+        payload = request.get_json(silent=True) or {}
+        topk = int(payload.get("topk") or 4)
+        topk = max(1, min(topk, 100))
+    except Exception:
+        topk = 4
+
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+        result = meta.get("result") if isinstance(meta.get("result"), dict) else {}
+
+        manifest = result.get("analysis_manifest") if isinstance(result.get("analysis_manifest"), list) else []
+        if manifest:
+            return jsonify({
+                "model_name": safe_model_name,
+                "dataset_path": result.get("_dataset_path") or "",
+                "predictions_csv": result.get("_pred_csv") or "",
+                "total_waves": result.get("total_waves") or len(manifest),
+                "analysis_manifest": manifest[:topk],
+            })
+
+        dataset_path = Path(result.get("_dataset_path") or "")
+        pred_csv = Path(result.get("_pred_csv") or "")
+
+        if not dataset_path.is_file():
+            split_dir = Path(meta.get("split_dir") or "")
+            for candidate_name in ("test.csv", "valid.csv", "train.csv"):
+                candidate = split_dir / candidate_name
+                if candidate.is_file():
+                    dataset_path = candidate
+                    break
+
+        if not pred_csv.is_file():
+            for candidate in (
+                ag_dir / f"test_predictions_{safe_model_name}.csv",
+                ag_dir / f"valid_predictions_{safe_model_name}.csv",
+            ):
+                if candidate.is_file():
+                    pred_csv = candidate
+                    break
+
+        if not dataset_path.is_file() or not pred_csv.is_file():
+            return jsonify({"error": "Model audit source files are missing"}), 404
+
+        audit_id = f"audit_{safe_model_name}"
+        plot_dir = PLOTS_DIR / audit_id
+        plot_dir.mkdir(parents=True, exist_ok=True)
+
+        if not list(plot_dir.glob("*.png")):
+            run_cmd([
+                sys.executable, str(SCRIPT_PATHS["plot_pred_on_waveforms"]),
+                "--raw", str(dataset_path),
+                "--pred", str(pred_csv),
+                "--outdir", str(plot_dir),
+                "--topk", str(topk),
+            ])
+
+        manifest = build_analysis_manifest(pred_csv, plot_dir, audit_id, "plots")
+        return jsonify({
+            "model_name": safe_model_name,
+            "dataset_path": str(dataset_path),
+            "predictions_csv": str(pred_csv),
+            "total_waves": len(manifest),
+            "analysis_manifest": manifest[:topk],
+        })
+    except Exception as exc:
+        return jsonify({"error": f"Failed to load model audit: {exc}"}), 500
 
 @api.route("/tcn-models", methods=["GET"])
 def get_tcn_models():
