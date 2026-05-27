@@ -63,7 +63,9 @@ def main() -> None:
         raise KeyError(f"pred file missing columns: {missing_pred}")
 
     raw  = raw.sort_values(["wave_id", "sample"]).copy()
-    pred = pred[["wave_id", "pred_wait_time_ms"]].drop_duplicates("wave_id").copy()
+    true_col = next((col for col in ["wait_time_ms", "true", "true_wait_time", "label"] if col in pred.columns), None)
+    pred_cols = ["wave_id", "pred_wait_time_ms"] + ([true_col] if true_col else [])
+    pred = pred[pred_cols].drop_duplicates("wave_id").copy()
 
     # ── เลือก wave ที่จะ plot ──────────────────────────────────
     if args.wave_id:
@@ -95,6 +97,11 @@ def main() -> None:
             )
 
     pred_map = dict(zip(pred["wave_id"].astype(str), pred["pred_wait_time_ms"]))
+    true_map = {}
+    if true_col:
+        true_map = dict(zip(pred["wave_id"].astype(str), pred[true_col]))
+    elif "wait_time_ms" in raw.columns:
+        true_map = raw.groupby(raw["wave_id"].astype(str))["wait_time_ms"].first().to_dict()
 
     count = 0
     for wave_id in chosen:
@@ -111,13 +118,19 @@ def main() -> None:
         t       = g["time_ms"].to_numpy(dtype=float)
         x       = g["value"].to_numpy(dtype=float)
         pred_ms = float(pred_map[wave_id_str])
+        true_value = true_map.get(wave_id_str)
+        true_ms = None if true_value is None or pd.isna(true_value) else float(true_value)
+        abs_error = abs(pred_ms - true_ms) if true_ms is not None else None
 
         plt.figure(figsize=(9, 4.8))
-        plt.plot(t, x, linewidth=1.5, label="waveform")
-        plt.axvline(pred_ms, linestyle="--", linewidth=2, label=f"pred = {pred_ms:.4f} ms")
+        plt.plot(t, x, linewidth=1.5, color="#00528A", label="waveform")
+        if true_ms is not None:
+            plt.axvline(true_ms, color="#00AEEF", linestyle="-", linewidth=2.2, label=f"label = {true_ms:.4f} ms")
+        plt.axvline(pred_ms, color="#F59E0B", linestyle="--", linewidth=2.2, label=f"prediction = {pred_ms:.4f} ms")
         plt.xlabel("time_ms")
         plt.ylabel("value")
-        plt.title(f"wave_id={wave_id_str}")
+        suffix = f" | abs error={abs_error:.4f} ms" if abs_error is not None else ""
+        plt.title(f"wave_id={wave_id_str}{suffix}")
         plt.legend()
         plt.tight_layout()
 
