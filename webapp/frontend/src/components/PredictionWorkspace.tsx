@@ -125,7 +125,7 @@ export default function PredictionWorkspace({
 Content-Type: application/json
 
 {
-  "dataset_path": "${predictUpload?.dataset_path ?? 'uploads/inference.csv'}",
+  "upload_id": "${predictUpload?.upload_id ?? 'infer_12345.csv'}",
   "model_name": "${selectedModel || 'TCN_aug_weighted_v1'}"
 }`;
   const responseExample = `{
