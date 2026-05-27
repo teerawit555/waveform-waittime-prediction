@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import (
+    AUTOGLUON_DIR,
+    DEFAULT_MODEL_NAME,
     MLFLOW_EXPERIMENT_NAME,
     MLFLOW_LOG_MODEL_DIRS,
     MLFLOW_REGISTERED_MODEL_NAME,
@@ -272,6 +274,128 @@ def _pick_metric(metrics: dict[str, Any], *names: str) -> float | None:
     return None
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        print(f"[WARN] Failed to read JSON {path}: {exc}")
+    return {}
+
+
+def _mtime_iso(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+    except Exception:
+        return None
+
+
+def _local_metrics(ag_dir: Path, meta: dict[str, Any]) -> dict[str, float | None]:
+    result = meta.get("result") if isinstance(meta.get("result"), dict) else {}
+    metrics = result.get("metrics") if isinstance(result.get("metrics"), dict) else {}
+
+    if not metrics:
+        raw_metrics = _read_json(ag_dir / "metrics.json")
+        test_metrics = raw_metrics.get("test") if isinstance(raw_metrics.get("test"), dict) else raw_metrics
+        metrics = {
+            "mae_all": test_metrics.get("mae"),
+            "rmse": test_metrics.get("rmse"),
+        }
+
+    overfitting = result.get("overfitting_summary") if isinstance(result.get("overfitting_summary"), dict) else {}
+    return {
+        "mae_all": _pick_metric(metrics, "mae_all", "mae"),
+        "rmse": _pick_metric(metrics, "rmse"),
+        "fast_precision": _pick_metric(metrics, "fast_precision"),
+        "fast_recall": _pick_metric(metrics, "fast_recall"),
+        "mae_fast": _pick_metric(metrics, "mae_fast"),
+        "mae_slow": _pick_metric(metrics, "mae_slow"),
+        "best_epoch": _pick_metric(overfitting, "best_epoch"),
+        "final_gap": _pick_metric(overfitting, "gap_final", "final_gap"),
+    }
+
+
+def _local_model_version_to_dict(ag_dir: Path, version: int) -> dict[str, Any] | None:
+    if not ag_dir.is_dir():
+        return None
+
+    meta = _read_json(ag_dir / "model_meta.json")
+    metrics = _local_metrics(ag_dir, meta)
+    run_name = meta.get("ag_name") or ag_dir.name
+    updated_at = _mtime_iso(ag_dir / "model_meta.json") or _mtime_iso(ag_dir)
+    aliases = ["default"] if ag_dir.name == DEFAULT_MODEL_NAME else []
+
+    return {
+        "name": MLFLOW_REGISTERED_MODEL_NAME,
+        "version": str(version),
+        "status": "READY" if meta else "LOCAL",
+        "current_stage": "Local",
+        "aliases": aliases,
+        "run_id": (meta.get("mlflow") or {}).get("run_id") if isinstance(meta.get("mlflow"), dict) else None,
+        "run_name": run_name,
+        "run_status": "FINISHED",
+        "source": str(ag_dir),
+        "creation_timestamp": None,
+        "last_updated_timestamp": None,
+        "created_at": updated_at,
+        "updated_at": updated_at,
+        "metrics": metrics,
+        "all_metrics": metrics,
+        "params": (meta.get("result") or {}).get("params", {}) if isinstance(meta.get("result"), dict) else {},
+        "tags": {
+            "registry_backend": "local",
+            "ag_model_name": ag_dir.name,
+            "tcn_model_name": str(meta.get("tcn_name") or ""),
+        },
+        "version_tags": {},
+    }
+
+
+def get_local_model_registry_summary(
+    registered_model_name: str = MLFLOW_REGISTERED_MODEL_NAME,
+    reason: str | None = None,
+    max_results: int = 50,
+) -> dict[str, Any]:
+    rows = []
+    if AUTOGLUON_DIR.exists():
+        model_dirs = sorted(
+            [path for path in AUTOGLUON_DIR.iterdir() if path.is_dir()],
+            key=lambda path: path.stat().st_mtime,
+        )
+        for index, ag_dir in enumerate(model_dirs, start=1):
+            row = _local_model_version_to_dict(ag_dir, index)
+            if row is not None:
+                rows.append(row)
+
+    rows.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    rows = rows[:max_results]
+
+    best_by_mae = min(
+        (row for row in rows if row["metrics"].get("mae_all") is not None),
+        key=lambda row: row["metrics"]["mae_all"],
+        default=None,
+    )
+    candidate = rows[0] if rows else None
+    production = next((row for row in rows if "default" in row.get("aliases", [])), None)
+
+    return {
+        "enabled": True,
+        "registry_backend": "local",
+        "tracking_uri": MLFLOW_TRACKING_URI,
+        "experiment_name": MLFLOW_EXPERIMENT_NAME,
+        "registered_model_name": registered_model_name,
+        "versions": rows,
+        "version_count": len(rows),
+        "latest_versions_count": len(rows),
+        "candidate_version": candidate["version"] if candidate else None,
+        "production_version": production["version"] if production else None,
+        "best_version": best_by_mae["version"] if best_by_mae else None,
+        "best_mae_all": best_by_mae["metrics"]["mae_all"] if best_by_mae else None,
+        "reason": reason or "MLflow registry is unavailable; showing local trained model artifacts.",
+    }
+
+
 def _model_version_to_dict(client: Any, version: Any) -> dict[str, Any]:
     run = None
     run_id = getattr(version, "run_id", None)
@@ -332,9 +456,8 @@ def get_model_registry_summary(
     }
     mlflow = _import_mlflow()
     if mlflow is None:
-        summary["enabled"] = False
-        summary["reason"] = "disabled" if _is_disabled() else "mlflow package is not installed"
-        return summary
+        reason = "disabled" if _is_disabled() else "mlflow package is not installed"
+        return get_local_model_registry_summary(registered_model_name, reason=reason, max_results=max_results)
 
     try:
         from mlflow.tracking import MlflowClient
