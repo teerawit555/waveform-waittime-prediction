@@ -139,7 +139,12 @@ def build_analysis_manifest(pred_csv: Path, analysis_dir: Path, job_id: str, cat
                     if col in pred_df.columns:
                         item["true"] = float(row[col])
                         break
-                item["wave_id"] = row["wave_id"]
+                val = row["wave_id"]
+                if hasattr(val, "item"):
+                    val = val.item()
+                if isinstance(val, float) and val.is_integer():
+                    val = int(val)
+                item["wave_id"] = val
                 if item["pred"] is not None and item["true"] is not None:
                     item["error"] = float(item["pred"]) - float(item["true"])
                     item["abs_error"] = abs(item["error"])
