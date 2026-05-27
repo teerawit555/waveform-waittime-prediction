@@ -5,6 +5,7 @@ import uuid
 import sys
 import pandas as pd
 import json
+import os
 
 from pathlib import Path
 from .config import (
@@ -65,10 +66,17 @@ SCRIPT_PATHS = {
 
 def run_cmd(cmd: list[str]):
     """รัน subprocess command แล้วคืนค่า stdout; raise CalledProcessError ถ้าล้มเหลว"""
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
         check=True,
     )
     return result.stdout
@@ -127,11 +135,14 @@ def build_analysis_manifest(pred_csv: Path, analysis_dir: Path, job_id: str, cat
                         item["pred"] = float(row[col])
                         break
                 # หา ground-truth value
-                for col in ["wait_time_ms", "true"]:
+                for col in ["wait_time_ms", "true", "true_wait_time", "label"]:
                     if col in pred_df.columns:
                         item["true"] = float(row[col])
                         break
                 item["wave_id"] = row["wave_id"]
+                if item["pred"] is not None and item["true"] is not None:
+                    item["error"] = float(item["pred"]) - float(item["true"])
+                    item["abs_error"] = abs(item["error"])
 
         items.append(item)
 
@@ -779,6 +790,11 @@ class TrainingService:
 
             val_pred_csv = ag_model_dir / f"test_predictions_{ag_model_name}.csv"
             fi_csv       = ag_model_dir / f"feature_importance_{ag_model_name}.csv"
+            waveform_plot_dir = PLOTS_DIR / job_id
+            waveform_plot_dir.mkdir(parents=True, exist_ok=True)
+            analysis_manifest = []
+            analysis_images = []
+            total_waves = 0
 
             # วิเคราะห์ regression predictions (scatter, residual, histogram)
             if val_pred_csv.exists():
@@ -788,6 +804,21 @@ class TrainingService:
                     "--outdir",  str(analysis_dir),
                     "--fast-ms", str(fast_ms),
                 ])
+                job_store.update(job_id, progress=94, message="Generating training waveform gallery...")
+                run_cmd([
+                    sys.executable, str(SCRIPT_PATHS["plot_pred_on_waveforms"]),
+                    "--raw",    str(split_csv["test"]),
+                    "--pred",   str(val_pred_csv),
+                    "--outdir", str(waveform_plot_dir),
+                    "--topk",   "30",
+                    "--mode",   "first",
+                ])
+                analysis_manifest = build_analysis_manifest(val_pred_csv, waveform_plot_dir, job_id, "plots")
+                analysis_images = list_pngs(waveform_plot_dir, job_id, "plots")
+                try:
+                    total_waves = int(pd.read_csv(val_pred_csv)["wave_id"].nunique())
+                except Exception:
+                    total_waves = len(analysis_manifest)
 
             # วิเคราะห์ feature importance แยก group
             if fi_csv.exists():
@@ -844,6 +875,11 @@ class TrainingService:
                     "metrics":             metrics,
                     "history":             tcn_history,
                     "evaluation":          evaluation,
+                    "analysis_manifest":   analysis_manifest,
+                    "analysis_images":     analysis_images,
+                    "total_waves":         total_waves,
+                    "_dataset_path":        str(split_csv["test"]),
+                    "_pred_csv":            str(val_pred_csv),
                     "feature_summary":     feature_summary,
                     "overfitting_summary": overfitting,
                     "plots": {
@@ -929,6 +965,11 @@ class TrainingService:
                     "metrics":        metrics,
                     "history":        tcn_history,
                     "evaluation":     evaluation,
+                    "analysis_manifest": analysis_manifest,
+                    "analysis_images": analysis_images,
+                    "total_waves":    total_waves,
+                    "_dataset_path":   str(split_csv["test"]),
+                    "_pred_csv":       str(val_pred_csv),
                     "feature_summary": feature_summary,
                     "plots": {
                         "learning_curve":      f"/api/files/tcn/{tcn_model_name}/learning_curve.png",
@@ -1003,6 +1044,75 @@ class PredictionService:
         5. predict_ag_1stage     → run inference ด้วย AutoGluon
         6. plot_pred_on_waveforms → สร้างภาพ waveform + annotation ผล predict
     """
+
+    @staticmethod
+    def cleanup_old_prediction_jobs(max_age_hours: int = 24):
+        """
+        ตรวจสอบและทำความสะอาดเฉพาะ Prediction Jobs ที่มีอายุมากกว่า max_age_hours ชั่วโมง:
+        1. ลบไฟล์ทำนายต้นฉบับใน uploads/
+        2. ลบโฟลเดอร์ intermediate files ใน data/processed/prediction/<job_id>
+        3. ลบโฟลเดอร์ผลลัพธ์ใน results/<job_id>
+        4. ลบโฟลเดอร์กราฟพล็อตใน plots/<job_id>
+        5. ลบประวัติงานใน SQLite (jobs table)
+        """
+        import time
+        import shutil
+        import sqlite3
+        from .job_store import DB_PATH, job_store
+
+        current_time = time.time()
+        max_age_seconds = max_age_hours * 3600
+
+        if not RESULTS_DIR.exists():
+            return
+
+        for job_dir in RESULTS_DIR.iterdir():
+            if not job_dir.is_dir():
+                continue
+
+            job_id = job_dir.name
+
+            try:
+                # ตรวจสอบอายุไดเรกทอรี (อ้างอิง mtime หรือ ctime)
+                mtime = job_dir.stat().st_mtime
+                if (current_time - mtime) > max_age_seconds:
+                    # ดึงข้อมูลจากฐานข้อมูล SQLite เพื่อหาไฟล์ต้นทาง
+                    job_data = job_store.as_dict(job_id)
+                    if job_data and job_data.get("job_type") == "predict":
+                        result = job_data.get("result")
+                        if result:
+                            # 1. ลบไฟล์อัปโหลดดิบใน uploads/
+                            source_path = result.get("_source_dataset_path")
+                            if source_path:
+                                p = Path(source_path)
+                                if p.exists() and p.is_file():
+                                    p.unlink()
+
+                            # 2. ลบไฟล์ intermediate ใน data/processed/prediction/<job_id>
+                            processed_path = result.get("_dataset_path")
+                            if processed_path:
+                                p = Path(processed_path).parent
+                                try:
+                                    p.resolve().relative_to((DATA_DIR / "processed" / "prediction").resolve())
+                                except ValueError:
+                                    p = None
+                                if p is not None and p.exists() and p.is_dir():
+                                    shutil.rmtree(p, ignore_errors=True)
+
+                        # 3. ลบโฟลเดอร์ผลลัพธ์ใน results/<job_id>
+                        shutil.rmtree(job_dir, ignore_errors=True)
+
+                        # 4. ลบโฟลเดอร์กราฟพล็อตใน plots/<job_id>
+                        plot_dir = PLOTS_DIR / job_id
+                        if plot_dir.exists() and plot_dir.is_dir():
+                            shutil.rmtree(plot_dir, ignore_errors=True)
+
+                        # 5. ลบประวัติงานใน SQLite
+                        with sqlite3.connect(DB_PATH) as conn:
+                            conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            except Exception:
+                # ป้องกันข้อผิดพลาดระหว่างการทำความสะอาดขัดขวางการทำงานหลัก
+                pass
 
     @staticmethod
     def start_prediction(payload: dict) -> str:
