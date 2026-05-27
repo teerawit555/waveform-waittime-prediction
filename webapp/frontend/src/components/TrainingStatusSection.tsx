@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Database, Download, FileCode2, LineChart, Target } from 'lucide-react';
+import { Activity, BarChart3, Database, Download, FileCode2, Images, LineChart, Target } from 'lucide-react';
 import {
   Bar,
   BarChart,
@@ -57,6 +57,23 @@ export default function TrainingStatusSection({
   const plotArtifacts = trainJob?.result?.plots ? Object.keys(trainJob.result.plots).filter((key) => trainJob.result.plots[key]) : [];
   const resultArtifacts = trainJob?.result?.results ? Object.keys(trainJob.result.results).filter((key) => trainJob.result.results[key]) : [];
   const artifactCount = plotArtifacts.length + resultArtifacts.length;
+  const waveformItems = trainJob?.result?.analysis_manifest ?? [];
+  const waveformTotal = trainJob?.result?.total_waves ?? waveformItems.length;
+  const displayedWaveforms = [...waveformItems].sort((a: any, b: any) => {
+    const numA = parseInt(String(a.wave_id ?? '').replace(/\D/g, ''), 10);
+    const numB = parseInt(String(b.wave_id ?? '').replace(/\D/g, ''), 10);
+    if (!Number.isNaN(numA) && !Number.isNaN(numB)) return numA - numB;
+    return String(a.wave_id ?? '').localeCompare(String(b.wave_id ?? ''));
+  });
+  const formatWaveMetric = (value: any) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric.toFixed(6) : '--';
+  };
+  const formatSignedWaveMetric = (value: any) => {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '--';
+    return `${numeric > 0 ? '+' : ''}${numeric.toFixed(6)}`;
+  };
 
   return (
     <section className="card analytics-section">
@@ -400,6 +417,71 @@ export default function TrainingStatusSection({
               <BarChart3 size={28} />
               <strong>Native AutoGluon evaluation unavailable</strong>
               <span>Prediction CSV data is missing for this model. Exported PNG artifacts are still available below.</span>
+            </div>
+          )}
+
+          <SectionDivider label="Waveform Prediction Audit" />
+          {displayedWaveforms.length ? (
+            <div className="training-waveform-gallery">
+              <div className="chart-panel-head">
+                <div>
+                  <span>Per-Wave Review</span>
+                  <h3>Label vs Prediction Gallery</h3>
+                  <p>Each exported waveform overlays the ground-truth label and model prediction in one plot.</p>
+                </div>
+                <div className="chart-callout">
+                  <span>Test Waves</span>
+                  <strong>{waveformTotal}</strong>
+                </div>
+              </div>
+              <div className="training-waveform-legend" aria-label="Waveform plot legend">
+                <span><i className="legend-line is-waveform" /> Waveform</span>
+                <span><i className="legend-line is-label" /> Label</span>
+                <span><i className="legend-line is-prediction" /> Prediction</span>
+              </div>
+              <div className="training-waveform-grid">
+                {displayedWaveforms.map((item: any) => {
+                  const error = item.abs_error ?? (
+                    item.pred != null && item.true != null ? Math.abs(Number(item.pred) - Number(item.true)) : null
+                  );
+
+                  return (
+                    <article className="training-waveform-card" key={`${item.wave_id}-${item.image}`}>
+                      <img src={toFileUrl(item.image)} alt={`Waveform ${item.wave_id}`} />
+                      <div className="training-waveform-meta">
+                        <div className="training-waveform-title">
+                          <Images size={15} />
+                          <strong>Wave {item.wave_id}</strong>
+                        </div>
+                        <div className="training-waveform-values">
+                          <div>
+                            <span>Label</span>
+                            <strong>{formatWaveMetric(item.true)}</strong>
+                          </div>
+                          <div>
+                            <span>Prediction</span>
+                            <strong>{formatWaveMetric(item.pred)}</strong>
+                          </div>
+                          <div>
+                            <span>Error</span>
+                            <strong>{formatSignedWaveMetric(item.error)}</strong>
+                          </div>
+                          <div>
+                            <span>Abs Error</span>
+                            <strong>{formatWaveMetric(error)}</strong>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="chart-empty-state">
+              <Images size={28} />
+              <strong>No waveform audit plots yet</strong>
+              <span>New training runs will export per-wave plots with label and prediction markers after AutoGluon evaluation.</span>
             </div>
           )}
 
