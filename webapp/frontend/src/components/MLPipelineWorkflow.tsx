@@ -42,14 +42,22 @@ export default function MLPipelineWorkflow() {
                 <path className="ml-workflow-arrow-head" d="M1.3 1.4 L7.8 4.5 L1.3 7.6" />
               </marker>
             </defs>
-            <path d="M136 155 C166 155 160 83 195 83" />
-            <path d="M136 198 C166 198 138 303 170 303" />
-            <path d="M359 83 C470 83 583 88 583 128" />
-            <path d="M316 303 H350" />
-            <path d="M478 303 H510" />
-            <path d="M583 268 V202" />
-            <path d="M656 163 H688" />
-            <path d="M816 163 H838" />
+            {/* Input to Feature Engineering (Top path): orthogonal rounded corner, starting from slanted edge */}
+            <path d="M131 180 H144 V93 Q144 85, 152 85 H195" />
+            {/* Input to Wave Tensor (Bottom path): orthogonal rounded corner, starting from slanted edge */}
+            <path d="M131 180 H144 V267 Q144 275, 152 275 H170" />
+            {/* Feature Engineering to Feature Concatenation (Top path down): orthogonal rounded corner */}
+            <path d="M359 85 H575 Q583 85, 583 93 V145" />
+            {/* Wave Tensor to TCN Encoder */}
+            <path d="M316 275 H350" />
+            {/* TCN Encoder to TCN Embedding */}
+            <path d="M478 275 H510" />
+            {/* TCN Embedding to Feature Concatenation */}
+            <path d="M583 240 V215" />
+            {/* Feature Concatenation to AutoGluon Tabular */}
+            <path d="M656 180 H688" />
+            {/* AutoGluon Tabular to Output */}
+            <path d="M816 180 H838" />
           </svg>
 
           <span className="ml-workflow-edge-label ml-workflow-label-feature-csv">.csv</span>

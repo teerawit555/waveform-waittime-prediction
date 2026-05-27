@@ -97,7 +97,7 @@ body {
   order: 1;
   background: rgba(0,31,69,.12);
 }
-
+/* 
 .brand-mark {
   width: 74px;
   height: 38px;
@@ -110,7 +110,7 @@ body {
   border-radius: 7px;
   box-shadow: none;
   flex: 0 0 auto;
-}
+} */
 
 .brand-logo {
   width: 100%;

@@ -1,5 +1,6 @@
 import { Activity, Database, FileUp, GitCompareArrows, Rocket, ShieldCheck, Sparkles } from 'lucide-react';
 import MLPipelineWorkflow from './MLPipelineWorkflow';
+import { HeroWaveformGraphic } from './HeroWaveformGraphic';
 
 const lifecycleSteps = [
   {
@@ -40,7 +41,7 @@ const explanationCards = [
   },
   {
     title: 'Deploy',
-    body: 'The default SPEA 2 route gives API users one stable inference path while admins manage model changes.',
+    body: 'The default NS 1.3 route gives API users one stable inference path while admins manage model changes.',
   },
   {
     title: 'Access',
@@ -76,21 +77,33 @@ export default function WorkflowSection() {
         </div>
       </div>
 
-      <div className="workflow-explanation">
-        <div className="workflow-explanation-intro">
-          <Sparkles size={18} />
-          <div>
-            <span className="view-kicker">Workflow Notes</span>
-            <h3>How this project turns waveform signals into reliable wait-time predictions</h3>
+      <div className="workflow-explanation-split">
+        <div className="workflow-explanation">
+          <div className="workflow-explanation-intro">
+            <Sparkles size={18} />
+            <div>
+              <span className="view-kicker">Workflow Notes</span>
+              <h3>How this project turns waveform signals into reliable wait-time predictions</h3>
+            </div>
+          </div>
+          <div className="workflow-explanation-grid">
+            {explanationCards.map((card) => (
+              <article key={card.title}>
+                <strong>{card.title}</strong>
+                <span>{card.body}</span>
+              </article>
+            ))}
           </div>
         </div>
-        <div className="workflow-explanation-grid">
-          {explanationCards.map((card) => (
-            <article key={card.title}>
-              <strong>{card.title}</strong>
-              <span>{card.body}</span>
-            </article>
-          ))}
+
+        <div className="workflow-graphic-panel">
+          <div className="graphic-panel-head">
+            <span className="view-kicker">Signal Visualizer</span>
+            <h4>Real-time Adaptive Wait-time Interpolation</h4>
+          </div>
+          <div className="graphic-canvas-wrapper">
+            <HeroWaveformGraphic />
+          </div>
         </div>
       </div>
     </section>

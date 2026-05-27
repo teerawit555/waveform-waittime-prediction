@@ -1,4 +1,4 @@
-﻿/* Workflow diagrams and ML pipeline visuals */
+/* Workflow diagrams and ML pipeline visuals */
 .workflow-page {
   display: grid;
   gap: 18px;
@@ -749,8 +749,8 @@
 
 .ml-workflow-connectors > path {
   fill: none;
-  stroke: rgba(28,48,72,.72);
-  stroke-width: 1.45;
+  stroke: #1c3048;
+  stroke-width: 1.8;
   stroke-linecap: round;
   stroke-linejoin: round;
   marker-end: url(#workflow-arrow);
@@ -758,9 +758,9 @@
 }
 
 .ml-workflow-arrow-head {
-  fill: none;
-  stroke: rgba(28,48,72,.76);
-  stroke-width: 1.55;
+  fill: #1c3048;
+  stroke: #1c3048;
+  stroke-width: 1.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -807,6 +807,13 @@
   border: 1px solid rgba(0,58,112,.22);
   border-radius: var(--radius-sm);
   box-shadow: 0 10px 24px rgba(0,58,112,.09);
+  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+}
+
+.ml-workflow-node:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 32px rgba(0, 58, 112, 0.15);
+  border-color: var(--blue);
 }
 
 .ml-workflow-node.is-slanted {
@@ -816,10 +823,15 @@
 }
 
 .ml-workflow-node.is-model {
-  border-color: rgba(0,128,92,.38);
+  border: 1.5px solid #a3d9c9;
   border-radius: var(--radius-md);
-  background: linear-gradient(180deg, #ffffff, #eef9f4);
+  background: #f0f9f4;
   box-shadow: 0 12px 28px rgba(0,128,92,.12);
+}
+
+.ml-workflow-node.is-model:hover {
+  border-color: #78c4ae;
+  box-shadow: 0 16px 36px rgba(0,128,92,.18);
 }
 
 .ml-workflow-node strong {
@@ -868,17 +880,17 @@
 }
 
 .ml-workflow-label-feature-csv {
-  top: 70px;
+  top: 72px;
   left: 48.5%;
 }
 
 .ml-workflow-label-embed-csv {
-  top: 228px;
+  top: 221px;
   left: 64.2%;
 }
 
 .ml-workflow-label-augment {
-  top: 244px;
+  top: 216px;
   left: 36.4%;
   color: var(--gray-600);
   font-size: .55rem;
@@ -890,55 +902,154 @@
 
 .ml-workflow-input {
   left: 2.55%;
-  top: 138px;
-  width: 112px;
-  background: linear-gradient(180deg, #ffffff, #eef7ff);
+  top: 145px;
+  width: 11.91%;
+  background: #eef7ff;
+  border: 1.5px solid #d0e4f7;
+}
+.ml-workflow-input:hover {
+  border-color: #a8cbea;
 }
 
 .ml-workflow-feature {
   left: 20.75%;
-  top: 48px;
-  width: 164px;
-  background: linear-gradient(180deg, #ffffff, #f4f0ff);
+  top: 50px;
+  width: 17.45%;
+  background: #f6eeff;
+  border: 1.5px solid #dec9f9;
+}
+.ml-workflow-feature:hover {
+  border-color: #cba8fa;
 }
 
 .ml-workflow-tensor {
   left: 18.1%;
-  top: 268px;
-  width: 146px;
-  background: linear-gradient(180deg, #ffffff, #eef7ff);
+  top: 240px;
+  width: 15.53%;
+  background: #eff8ff;
+  border: 1.5px solid #c5e2f7;
+}
+.ml-workflow-tensor:hover {
+  border-color: #9bc8eb;
 }
 
 .ml-workflow-encoder {
   left: 37.2%;
-  top: 268px;
-  width: 128px;
+  top: 240px;
+  width: 13.62%;
 }
 
 .ml-workflow-embedding {
   left: 54.25%;
-  top: 268px;
-  width: 146px;
-  background: linear-gradient(180deg, #ffffff, #eff8ff);
+  top: 240px;
+  width: 15.53%;
+  background: #eff8ff;
+  border: 1.5px solid #c5e2f7;
+}
+.ml-workflow-embedding:hover {
+  border-color: #9bc8eb;
 }
 
 .ml-workflow-merge {
   left: 54.25%;
-  top: 128px;
-  width: 146px;
-  background: linear-gradient(180deg, #ffffff, #edf7ff);
+  top: 145px;
+  width: 15.53%;
+  background: #eff8ff;
+  border: 1.5px solid #c5e2f7;
+}
+.ml-workflow-merge:hover {
+  border-color: #9bc8eb;
 }
 
 .ml-workflow-autogluon {
   left: 73.2%;
-  top: 128px;
-  width: 128px;
+  top: 145px;
+  width: 13.62%;
 }
 
 .ml-workflow-output {
   left: 89.15%;
-  top: 128px;
-  width: 86px;
-  background: linear-gradient(180deg, #ffffff, #f7fbff);
+  top: 145px;
+  width: 9.15%;
+  background: #f4f8fc;
+  border: 1.5px solid #e2edf5;
 }
+.ml-workflow-output:hover {
+  border-color: #c0d3e3;
+}
+
+/* Workflow explanation split layout with interactive visualizer */
+.workflow-explanation-split {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 18px;
+  align-items: stretch;
+}
+
+.workflow-explanation-split .workflow-explanation {
+  margin-bottom: 0;
+  height: 100%;
+}
+
+.workflow-explanation-split .workflow-explanation-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.workflow-graphic-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid rgba(0, 58, 112, 0.14);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  height: 100%;
+}
+
+.graphic-panel-head {
+  margin-bottom: 14px;
+}
+
+.graphic-panel-head h4 {
+  margin-top: 4px;
+  color: var(--navy-deep);
+  font-family: var(--font-display);
+  font-size: 1.12rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.graphic-canvas-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px dashed rgba(0, 58, 112, 0.12);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  overflow: hidden;
+  position: relative;
+  min-height: 200px;
+}
+
+.hero-minimal-wave {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 900px) {
+  .workflow-explanation-split {
+    grid-template-columns: 1fr;
+  }
+  
+  .workflow-explanation-split .workflow-explanation-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 

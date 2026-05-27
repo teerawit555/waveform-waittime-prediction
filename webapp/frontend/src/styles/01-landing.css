@@ -1,4 +1,4 @@
-﻿/* Landing page and public home surface */
+/* Landing page and public home surface */
 .landing-page {
   display: grid;
   gap: 34px;
@@ -12,6 +12,10 @@
 .page-shell.is-home .landing-page {
   margin-left: -28px;
   margin-right: -28px;
+  /* background:
+    radial-gradient(circle at 0% 0%, #e8f4fd 0%, rgba(232,244,253,.72) 28%, transparent 54%),
+    radial-gradient(circle at 50% 18%, #f0f7ff 0%, rgba(240,247,255,.7) 30%, transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,.72), #fff 76%); */
 }
 
 .landing-hero {
@@ -43,27 +47,221 @@
     linear-gradient(180deg, rgba(0,58,112,.04) 1px, transparent 1px);
   background-size: 64px 64px;
   mask-image: linear-gradient(90deg, transparent 0%, #000 46%, #000 100%);
+  /* mask-image: linear-gradient(
+    90deg, 
+    transparent 0%, 
+    #000 20%, 
+    #000 80%, 
+    transparent 100%
+  ); */
   opacity: .5;
   pointer-events: none;
 }
 
-.landing-hero::before {
-  content: '';
-  position: absolute;
-  right: clamp(78px, 14vw, 300px);
-  top: 50%;
-  width: min(34vw, 450px);
-  aspect-ratio: 1.2;
+.landing-hero-visual {
+  position: relative;
+  z-index: 1;
+  justify-self: center;
+  align-self: center;
+  min-width: 0;
+  animation: landing-rise 620ms 80ms cubic-bezier(.2,.8,.2,1) both;
+}
+
+.hero-logo-card {
+  display: block;
+  width: 100%;
+  max-width: 450px;
   height: auto;
-  background:
-    url('/neurosettle-logo.png') center / 82% auto no-repeat,
-    linear-gradient(135deg, rgba(255,255,255,.78), rgba(232,246,253,.34));
+  padding: 28px;
+  background: linear-gradient(135deg, rgba(255,255,255,.78), rgba(232,246,253,.34));
   border: 1px solid rgba(0,58,112,.09);
   border-radius: 24px;
-  box-shadow: 0 28px 80px rgba(0,31,69,.11);
+  box-shadow: 0 20px 52px rgba(0,31,69,.12), 0 1px 0 rgba(255,255,255,.9) inset;
+  object-fit: contain;
   opacity: .9;
-  transform: translateY(-50%) rotate(-2deg);
-  pointer-events: none;
+  transform: rotate(-2deg);
+  transition:
+    transform 360ms ease-out,
+    box-shadow 360ms ease-out,
+    border-color 360ms ease-out,
+    opacity 360ms ease-out;
+}
+
+.hero-logo-card:hover {
+  border-color: rgba(0,188,212,.35);
+  box-shadow: 
+    0 28px 64px rgba(0,31,69,.18), 
+    0 0 0 1px rgba(0,188,212,.2),
+    0 1px 0 rgba(255,255,255,.94) inset;
+  opacity: 1;
+  transform: translateY(-6px) rotate(-1deg);
+}
+
+.hero-minimal-wave {
+  display: block;
+  width: 100%;
+  max-width: 720px;
+  background: transparent;
+  padding: 0;
+  overflow: visible;
+  position: relative;
+  margin-left: auto;
+  transition: transform 300ms ease-out;
+}
+
+.hero-minimal-wave:hover {
+  transform: translateY(-5px) scale(1.015);
+}
+
+.minimal-wave-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+/* Smooth Wave & Neon Glow styling - Optimized for Light Backgrounds */
+.wave-line-glow {
+  fill: none;
+  stroke-width: 6px; /* Fined down to 6px for a more precise, ultra-premium look */
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+  animation: plt-draw-signal 2.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+.wave-pred-dashed-line {
+  stroke: #004ae0; /* High-contrast Royal Blue dashed line */
+  stroke-width: 2.2px;
+  stroke-dasharray: 6, 4;
+  fill: none;
+}
+
+.clip-rect-anim {
+  animation: plt-draw-down 1.4s cubic-bezier(0.4, 0, 0.2, 1) 1.5s forwards;
+}
+
+.wave-settle-dot {
+  transform-origin: 260px 70px; /* Shifted to match new x=260 coordinate */
+  animation: wave-pop-dot 0.6s cubic-bezier(.34,1.56,.64,1) 1.6s both;
+}
+
+.wave-settle-pulse {
+  transform-origin: 260px 70px; /* Shifted to match new x=260 coordinate */
+  stroke-width: 2px;
+  animation: wave-pulse-ring 2.4s infinite ease-out 1900ms;
+}
+
+.wave-ambient-fill {
+  opacity: 0;
+  animation: wave-fade-text 1.5s ease-out 0.8s forwards;
+}
+
+/* Premium Corporate Navy Slate Axis and Labels styling */
+.plt-axis-line {
+  stroke: #003a70; /* Premium deep corporate navy blue */
+  stroke-width: 3px; /* Proportionately balanced thickness */
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 2px 4px rgba(0, 58, 112, 0.06));
+}
+
+.plt-axis-arrow-head {
+  fill: #003a70; /* Matching deep navy solid triangular arrowhead */
+}
+
+.plt-axis-tick {
+  stroke: rgba(0, 58, 112, 0.38); /* Sleek slate-blue calibration ticks */
+  stroke-width: 1.8px;
+  stroke-linecap: round;
+}
+
+.plt-axis-text {
+  font-family: 'Outfit', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 11px; /* Sophisticated smaller size */
+  font-weight: 800; /* Extra bold text */
+  fill: #003a70; /* Matching brand deep navy */
+  letter-spacing: 1.5px; /* Elegant wide letter spacing */
+}
+
+@keyframes plt-draw-down {
+  to {
+    height: 165px; /* Gradually draws the prediction line downwards */
+  }
+}
+
+@keyframes plt-draw-signal {
+  from {
+    stroke-dashoffset: 1200;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Brand badge in hero copy */
+.hero-brand-badge {
+  display: flex;
+  align-items: center; /* Vertically center logo and kicker */
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.hero-brand-logo {
+  height: 38px;
+  width: 38px;
+  border-radius: 50%; /* Perfect circular badge to match rounded kicker and favicon */
+  padding: 0; /* Full coverage inside the circle */
+  background: #011327; /* Rich dark navy background for logo depth */
+  border: 2px solid rgba(0, 188, 212, 0.45); /* Bright high-contrast cyan border */
+  box-shadow: 
+    0 4px 12px rgba(0, 31, 69, 0.12),
+    0 0 8px rgba(0, 188, 212, 0.2);
+  transition: transform 300ms, box-shadow 300ms, border-color 300ms;
+}
+
+.hero-brand-logo:hover {
+  transform: scale(1.1) rotate(4deg);
+  border-color: #00bcd4;
+  box-shadow: 
+    0 6px 16px rgba(0, 31, 69, 0.18),
+    0 0 14px rgba(0, 188, 212, 0.4);
+}
+
+.hero-brand-badge .landing-kicker {
+  margin-bottom: 0 !important; /* Force reset default margin to achieve perfect center alignment */
+}
+
+/* Animation Keyframes */
+@keyframes wave-pop-dot {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes wave-pulse-ring {
+  0% {
+    transform: scale(0.6);
+    stroke-width: 3.5px;
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(2.4);
+    stroke-width: 0.5px;
+    opacity: 0;
+  }
+}
+
+@keyframes wave-fade-text {
+  to {
+    opacity: 1;
+  }
 }
 
 .landing-hero-copy,
@@ -86,7 +284,7 @@
   padding: 8px 12px;
   color: var(--navy);
   background: rgba(255,255,255,.72);
-  border: 1px solid rgba(0,58,112,.12);
+  border: 1px solid rgba(0,188,212,.28);
   border-radius: 999px;
   box-shadow: 0 10px 30px rgba(0,31,69,.055);
   font-family: var(--font-mono);
@@ -94,6 +292,20 @@
   font-weight: 700;
   letter-spacing: .08em;
   text-transform: uppercase;
+}
+
+.landing-kicker::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  background: #00bcd4;
+  border-radius: 999px;
+  box-shadow: 0 0 0 4px rgba(0,188,212,.12);
+}
+
+.landing-kicker svg {
+  color: #00bcd4;
 }
 
 .landing-hero h2,
@@ -146,7 +358,7 @@
 .landing-actions .ghost-btn {
   color: var(--navy-deep);
   background: rgba(255,255,255,.34);
-  border-color: rgba(0,58,112,.16);
+  border-color: rgba(0,58,112,.4);
 }
 
 .landing-actions .ghost-btn:hover {
@@ -579,14 +791,13 @@
     padding-left: 0;
   }
 
-  .landing-hero::before {
-    position: relative;
-    top: auto;
-    right: auto;
-    width: min(100%, 430px);
+  .landing-hero-visual {
     order: 2;
     justify-self: start;
-    transform: none;
+  }
+
+  .hero-logo-card {
+    max-width: 430px;
   }
 
   .landing-hero-metrics {
@@ -618,8 +829,8 @@
     letter-spacing: 0;
   }
 
-  .landing-hero::before {
-    width: 100%;
+  .hero-logo-card {
+    max-width: 100%;
     border-radius: 16px;
   }
 
