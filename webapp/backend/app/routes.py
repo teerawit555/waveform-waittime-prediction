@@ -377,17 +377,9 @@ def plot_wave_on_demand():
 @api.route("/models", methods=["GET"])
 def get_models():
     models = list_available_models()
-    if is_admin_request():
-        return jsonify({
-            "default_model": DEFAULT_MODEL_NAME,
-            "models": models,
-            "training_enabled": TRAINING_ENABLED,
-        })
-
-    default_models = [model for model in models if model.get("name") == DEFAULT_MODEL_NAME and model.get("ready")]
     return jsonify({
         "default_model": DEFAULT_MODEL_NAME,
-        "models": default_models,
+        "models": models,
         "training_enabled": TRAINING_ENABLED,
     })
 
@@ -403,6 +395,9 @@ def get_model(model_name: str):
         return jsonify({"error": "Model not found"}), 404
     meta = json.loads(meta_file.read_text())
     result = meta.get("result") or {}
+    
+    modified = False
+
     if "history" not in result:
         history_path = None
         tcn_path = meta.get("tcn_path")
@@ -414,12 +409,68 @@ def get_model(model_name: str):
         if history_path is not None:
             result["history"] = load_tcn_history(history_path)
             meta["result"] = result
+            modified = True
 
     if "evaluation" not in result:
         ag_path = meta.get("ag_path")
         if ag_path:
             result["evaluation"] = load_ag_evaluation_data(Path(ag_path))
             meta["result"] = result
+            modified = True
+
+    # Add check for analysis_manifest to display audit plots in training section
+    if "analysis_manifest" not in result or not result["analysis_manifest"]:
+        safe_model_name = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in model_name.strip()).strip("_")
+        dataset_path = Path(result.get("_dataset_path") or "")
+        pred_csv = Path(result.get("_pred_csv") or "")
+
+        if not dataset_path.is_file():
+            split_dir = Path(meta.get("split_dir") or "")
+            for candidate_name in ("test.csv", "valid.csv", "train.csv"):
+                candidate = split_dir / candidate_name
+                if candidate.is_file():
+                    dataset_path = candidate
+                    break
+
+        if not pred_csv.is_file():
+            for candidate in (
+                ag_dir / f"test_predictions_{safe_model_name}.csv",
+                ag_dir / f"valid_predictions_{safe_model_name}.csv",
+            ):
+                if candidate.is_file():
+                    pred_csv = candidate
+                    break
+
+        if dataset_path.is_file() and pred_csv.is_file():
+            audit_id = f"audit_{safe_model_name}"
+            plot_dir = PLOTS_DIR / audit_id
+            plot_dir.mkdir(parents=True, exist_ok=True)
+
+            try:
+                # Generate up to 30 waves (same default as training)
+                if not list(plot_dir.glob("*.png")):
+                    run_cmd([
+                        sys.executable, str(SCRIPT_PATHS["plot_pred_on_waveforms"]),
+                        "--raw", str(dataset_path),
+                        "--pred", str(pred_csv),
+                        "--outdir", str(plot_dir),
+                        "--topk", "30",
+                    ])
+                
+                manifest = build_analysis_manifest(pred_csv, plot_dir, audit_id, "plots")
+                result["analysis_manifest"] = manifest
+                result["total_waves"] = len(manifest)
+                meta["result"] = result
+                modified = True
+            except Exception as e:
+                print(f"[WARN] Failed to generate on-demand audit manifest: {e}")
+
+    if modified:
+        try:
+            meta_file.write_text(json.dumps(meta, indent=2))
+        except Exception as e:
+            print(f"[WARN] Failed to write updated model meta: {e}")
+
     return jsonify(meta)
 
 def _safe_model_name(model_name: str) -> str:
