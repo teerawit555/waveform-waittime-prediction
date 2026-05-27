@@ -1,7 +1,7 @@
 import { ChangeEvent, FormEvent, Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Activity, ArrowRight, BookOpen, BrainCircuit, CheckCircle2, Database, FileCode2, FileUp, Home, KeyRound, LineChart, Lock, LogOut, PlayCircle, Rocket, Server, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, TerminalSquare, Waves } from 'lucide-react';
-import { getJob, getMlflowConfig, getMlflowModelRegistry, getModels, startPredict, startTrain, uploadFile, UploadResponse, API_BASE, ModelItem, MlflowInfo, MlflowModelRegistry } from './lib/api';
+import { deleteModel, getJob, getMlflowConfig, getMlflowModelRegistry, getModelAudit, getModels, startPredict, startTrain, uploadFile, UploadResponse, API_BASE, ModelItem, MlflowInfo, MlflowModelRegistry } from './lib/api';
 import StatCard from './components/StatCard';
 import DataTable from './components/DataTable';
 import { formatModelName, getModelNote, shouldHideModel } from './lib/modelDisplay';
@@ -499,7 +499,7 @@ useEffect(() => {
       setTrainJob(null);
 
       const res = await startTrain({
-        dataset_path: useExistingSplit ? null : dataset?.dataset_path,
+        upload_id: useExistingSplit ? null : dataset?.upload_id,
         split_dir: useExistingSplit ? existingSplitDir.trim() : null,
         target_col: targetCol,
         id_col: idCol,
@@ -574,7 +574,7 @@ useEffect(() => {
       setPredictJob(null);
 
       const res = await startPredict({
-        dataset_path: predictUpload.dataset_path,
+        upload_id: predictUpload.upload_id,
         id_col: idCol,
         wave_prefix: wavePrefix,
         model_name: selectedModel,
@@ -675,6 +675,48 @@ useEffect(() => {
     setGallerySearch('');
     setSearchedItem(null);
     setSearchError(null);
+  };
+
+  const handleDeleteModel = async (modelToDelete: string) => {
+    if (!isAdminUnlocked || !adminToken) {
+      setError('Admin access is required before deleting a model.');
+      return;
+    }
+
+    if (modelToDelete === DEFAULT_MODEL_NAME) {
+      setError('Default model cannot be deleted. Promote another model before removing it.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete model "${formatModelName(modelToDelete)}"? This removes its local AutoGluon and unused TCN artifacts.`);
+    if (!confirmed) return;
+
+    try {
+      setError(null);
+      await deleteModel(modelToDelete, adminToken);
+
+      if (selectedModel === modelToDelete) setSelectedModel(DEFAULT_MODEL_NAME);
+      if (selectedTrainModel === modelToDelete) {
+        setSelectedTrainModel('');
+        setTrainJob(null);
+      }
+
+      await Promise.all([
+        fetchModels(),
+        fetchTCNModels(),
+        fetchModelRegistry(),
+      ]);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const handleLoadModelAudit = async (modelToAudit: string) => {
+    if (!isAdminUnlocked || !adminToken) {
+      throw new Error('Admin access is required before loading model audit plots.');
+    }
+
+    return getModelAudit(modelToAudit, adminToken);
   };
 
   useEffect(() => {
@@ -1018,7 +1060,7 @@ useEffect(() => {
 Content-Type: application/json
 
 {
-  "dataset_path": "uploads/infer.csv",
+  "upload_id": "infer.csv",
   "model_name": "${selectedModel || 'your_model_name'}",
   "id_col": "wave_id",
   "wave_prefix": "wave_"
@@ -1505,6 +1547,8 @@ Content-Type: application/json
                 fetchMlflowConfig();
                 fetchModelRegistry();
               }}
+              onDeleteModel={handleDeleteModel}
+              onLoadModelAudit={handleLoadModelAudit}
             />
           </Suspense>
         </main>
