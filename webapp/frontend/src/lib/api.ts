@@ -3,7 +3,7 @@
 export const API_BASE = 'http://localhost:5000/api';
 
 export type UploadResponse = {
-  dataset_path: string;
+  upload_id: string;
   shape: [number, number];
   columns: string[];
   preview: Record<string, unknown>[];
@@ -82,6 +82,7 @@ export type MlflowModelVersion = {
 
 export type MlflowModelRegistry = {
   enabled: boolean;
+  registry_backend?: 'mlflow' | 'local';
   tracking_uri: string;
   experiment_name: string;
   registered_model_name: string;
@@ -94,6 +95,21 @@ export type MlflowModelRegistry = {
   best_mae_all?: number | null;
   versions: MlflowModelVersion[];
   reason?: string;
+};
+
+export type ModelAuditResponse = {
+  model_name: string;
+  dataset_path: string;
+  predictions_csv: string;
+  total_waves: number;
+  analysis_manifest: {
+    wave_id: string | number;
+    image: string;
+    pred?: number | null;
+    true?: number | null;
+    error?: number | null;
+    abs_error?: number | null;
+  }[];
 };
 
 function adminHeaders(adminToken?: string) {
@@ -167,6 +183,30 @@ export async function getMlflowModelRegistry(adminToken?: string): Promise<Mlflo
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? 'Failed to fetch MLflow model registry');
+  return data;
+}
+
+export async function deleteModel(modelName: string, adminToken?: string) {
+  const res = await fetch(`${API_BASE}/models/${encodeURIComponent(modelName)}`, {
+    method: 'DELETE',
+    headers: adminHeaders(adminToken),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? 'Failed to delete model');
+  return data as { deleted: boolean; model_name: string; deleted_paths: string[] };
+}
+
+export async function getModelAudit(modelName: string, adminToken?: string, topk = 4): Promise<ModelAuditResponse> {
+  const res = await fetch(`${API_BASE}/models/${encodeURIComponent(modelName)}/waveform-audit`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
+    },
+    body: JSON.stringify({ topk }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? 'Failed to load model audit plots');
   return data;
 }
 
