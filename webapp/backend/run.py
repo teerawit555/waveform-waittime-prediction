@@ -16,7 +16,7 @@ def create_app() -> Flask:
         resources={r"/api/*": {"origins": CORS_ORIGINS}},
         supports_credentials=False,
         allow_headers=["Content-Type", "Authorization", "X-Admin-Token"],
-        methods=["GET", "POST", "OPTIONS"],
+        methods=["GET", "POST", "DELETE", "OPTIONS"],
         max_age=600,
     )
     app.register_blueprint(api, url_prefix="/api")
