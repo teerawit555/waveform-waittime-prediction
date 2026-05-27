@@ -393,6 +393,132 @@
   font-weight: 600;
 }
 
+.training-waveform-gallery {
+  margin-bottom: 18px;
+  padding: 16px;
+  background: linear-gradient(180deg, #ffffff, #f8fbff);
+  border: 1px solid var(--gray-100);
+  border-radius: var(--radius-lg);
+}
+
+.training-waveform-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 12px 0 16px;
+  color: var(--gray-600);
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.training-waveform-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.legend-line {
+  width: 26px;
+  height: 0;
+  border-top: 3px solid var(--navy);
+}
+
+.legend-line.is-label {
+  border-color: var(--blue-light);
+}
+
+.legend-line.is-prediction {
+  border-color: #f59e0b;
+  border-top-style: dashed;
+}
+
+.training-waveform-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 14px;
+}
+
+.training-waveform-card {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--white);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+}
+
+.training-waveform-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--blue-light);
+  box-shadow: var(--shadow-hover);
+}
+
+.training-waveform-card img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  display: block;
+  object-fit: contain;
+  background: #f8fbff;
+  border-bottom: 1px solid var(--gray-100);
+}
+
+.training-waveform-meta {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.training-waveform-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--blue);
+}
+
+.training-waveform-title strong {
+  color: var(--navy);
+  font-family: var(--font-display);
+  font-size: .86rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.training-waveform-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-waveform-values div {
+  min-width: 0;
+  padding: 8px 9px;
+  background: #fbfdff;
+  border: 1px solid var(--gray-100);
+  border-left: 3px solid var(--blue);
+  border-radius: var(--radius-sm);
+}
+
+.training-waveform-values span {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--gray-400);
+  font-family: var(--font-mono);
+  font-size: .56rem;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.training-waveform-values strong {
+  color: var(--navy);
+  font-family: var(--font-mono);
+  font-size: .72rem;
+  overflow-wrap: anywhere;
+}
+
 .artifact-disclosure {
   margin-bottom: 20px;
   background: #fbfdff;
@@ -574,6 +700,7 @@
   .plot-dashboard,
   .run-history-grid,
   .chart-micro-stats,
+  .training-waveform-values,
   .feature-rank-row,
   .workflow-lifecycle-grid {
     grid-template-columns: 1fr;
