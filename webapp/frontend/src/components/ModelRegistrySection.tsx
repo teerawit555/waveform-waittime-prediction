@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Database, GitCompareArrows, Images, RefreshCw, Trash2 } from 'lucide-react';
 import { MlflowModelRegistry, MlflowModelVersion, ModelAuditResponse, toFileUrl } from '../lib/api';
-import { formatModelName, getModelNote } from '../lib/modelDisplay';
+import { DEFAULT_MODEL_NAME, formatModelName, getModelNote, shouldHideModel } from '../lib/modelDisplay';
 import StatCard from './StatCard';
 
 type ModelRegistrySectionProps = {
@@ -11,8 +11,6 @@ type ModelRegistrySectionProps = {
   onDeleteModel: (modelName: string) => void;
   onLoadModelAudit: (modelName: string) => Promise<ModelAuditResponse>;
 };
-
-const DEFAULT_MODEL_NAME = 'TCN_aug_weighted_v1';
 
 const metricLabels: Record<string, string> = {
   mae_all: 'MAE',
@@ -24,6 +22,12 @@ const metricLabels: Record<string, string> = {
 };
 
 const higherIsBetter = new Set(['fast_precision', 'fast_recall']);
+
+function minByMetric(versions: MlflowModelVersion[], metric: keyof MlflowModelVersion['metrics']) {
+  return versions
+    .filter((version) => Number.isFinite(Number(version.metrics?.[metric])))
+    .sort((a, b) => Number(a.metrics?.[metric]) - Number(b.metrics?.[metric]))[0];
+}
 
 function formatMetric(value?: number | null, digits = 6) {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
@@ -37,14 +41,22 @@ function formatDate(value?: string | null) {
   return date.toLocaleString();
 }
 
+function getVersionModelName(version: MlflowModelVersion) {
+  return version.tags?.ag_model_name || version.version_tags?.ag_model_name || version.run_name || '';
+}
+
+function versionModelLabel(version: MlflowModelVersion) {
+  const modelName = getVersionModelName(version);
+  return modelName ? formatModelName(modelName) : formatModelName(DEFAULT_MODEL_NAME);
+}
+
 function versionLabel(version: MlflowModelVersion) {
   const aliases = version.aliases?.length ? ` (${version.aliases.join(', ')})` : '';
-  return `v${version.version}${aliases}`;
+  return `${versionModelLabel(version)}${aliases}`;
 }
 
 function versionDisplayLabel(version: MlflowModelVersion) {
-  const runLabel = formatModelName(version.run_name);
-  return runLabel ? `${versionLabel(version)} / ${runLabel}` : versionLabel(version);
+  return `${versionLabel(version)} / MLflow v${version.version}`;
 }
 
 function compactRunId(runId?: string | null) {
@@ -58,12 +70,13 @@ function formatRegistryName(name?: string | null) {
   return name.replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function getVersionModelName(version: MlflowModelVersion) {
-  return version.tags?.ag_model_name || version.version_tags?.ag_model_name || version.run_name || '';
-}
-
 export default function ModelRegistrySection({ registry, loading, onRefresh, onDeleteModel, onLoadModelAudit }: ModelRegistrySectionProps) {
-  const versions = registry?.versions ?? [];
+  const versions = useMemo(() => {
+    return (registry?.versions ?? []).filter((version) => {
+      const modelName = getVersionModelName(version);
+      return !shouldHideModel(modelName);
+    });
+  }, [registry]);
   const [selectedVersions, setSelectedVersions] = useState<string[]>([]);
   const [auditModelName, setAuditModelName] = useState('');
   const [auditData, setAuditData] = useState<ModelAuditResponse | null>(null);
@@ -84,6 +97,17 @@ export default function ModelRegistrySection({ registry, loading, onRefresh, onD
   const selectedRows = useMemo(() => {
     return versions.filter((item) => selectedVersions.includes(item.version));
   }, [selectedVersions, versions]);
+
+  const candidateVersionRow = useMemo(() => {
+    return versions.find((version) => version.version === registry?.candidate_version)
+      ?? versions.find((version) => version.aliases?.includes('candidate'))
+      ?? versions[0];
+  }, [registry?.candidate_version, versions]);
+
+  const bestVersionRow = useMemo(() => {
+    return versions.find((version) => version.version === registry?.best_version)
+      ?? minByMetric(versions, 'mae_all');
+  }, [registry?.best_version, versions]);
 
   const metricWinners = useMemo(() => {
     const winners: Record<string, string | null> = {};
@@ -132,8 +156,9 @@ export default function ModelRegistrySection({ registry, loading, onRefresh, onD
     }
   };
 
-  const bestVersion = registry?.best_version ? `v${registry.best_version}` : '-';
-  const candidateVersion = registry?.candidate_version ? `v${registry.candidate_version}` : '-';
+  const bestVersion = bestVersionRow ? versionModelLabel(bestVersionRow) : '-';
+  const candidateVersion = candidateVersionRow ? versionModelLabel(candidateVersionRow) : '-';
+  const bestMae = bestVersionRow?.metrics?.mae_all ?? null;
   const registryMode = registry?.registry_backend === 'local' ? 'Local Artifact Registry' : 'MLflow-lite Registry';
   const formatAuditMetric = (value: any) => {
     const numeric = Number(value);
@@ -169,8 +194,8 @@ export default function ModelRegistrySection({ registry, loading, onRefresh, onD
         <div className="error-banner">{registry.reason || 'MLflow model registry is unavailable.'}</div>
       ) : versions.length === 0 ? (
         <div className="empty-state empty-action-state">
-          <strong>No model versions yet</strong>
-          <span>Train a model to create the first comparable version.</span>
+          <strong>No model registry runs yet</strong>
+          <span>Train or register a model to create the first comparable run.</span>
           <button type="button" className="empty-state-action" onClick={onRefresh} disabled={loading}>
             Refresh registry
           </button>
@@ -183,9 +208,9 @@ export default function ModelRegistrySection({ registry, loading, onRefresh, onD
 
           <div className="grid four compact-gap">
             <StatCard title="Registered Model" value={formatRegistryName(registry.registered_model_name)} />
-            <StatCard title="Versions" value={registry.version_count ?? versions.length} />
+            <StatCard title="Tracked Runs" value={versions.length} />
             <StatCard title="Candidate" value={candidateVersion} />
-            <StatCard title="Best MAE" value={registry.best_mae_all != null ? `${bestVersion} / ${formatMetric(registry.best_mae_all)}` : '-'} />
+            <StatCard title="Best MAE" value={bestMae != null ? `${bestVersion} / ${formatMetric(bestMae)}` : '-'} />
           </div>
 
           <div className="registry-run-table-panel">
@@ -200,7 +225,7 @@ export default function ModelRegistrySection({ registry, loading, onRefresh, onD
               <table className="registry-run-table">
                 <thead>
                   <tr>
-                    <th>Version</th>
+                    <th>Model</th>
                     <th>Alias / Status</th>
                     <th>MAE</th>
                     <th>RMSE</th>

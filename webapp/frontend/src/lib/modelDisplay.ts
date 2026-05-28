@@ -3,24 +3,10 @@ type ModelDisplayInfo = {
   note?: string;
 };
 
+export const DEFAULT_MODEL_NAME = 'TCN_aug_weighted_v1';
+
 const modelDisplayMap: Record<string, ModelDisplayInfo> = {
-  ag_1stage_hybrid_v1: {
-    label: 'NS 1.0',
-    note: 'First clean-signal version without noise.',
-  },
-  tcn_v1: {
-    label: 'NS 1.0 Encoder',
-    note: 'TCN encoder used by the first clean-signal version.',
-  },
-  wave_model_v_overfit_check: {
-    label: 'NS 1.1',
-    note: 'Next version after NS 1.0 with overfit checking.',
-  },
-  test_ml_flow: {
-    label: 'NS 1.2',
-    note: 'Noise was added for model training and MLflow tracking is enabled.',
-  },
-  TCN_aug_weighted_v1: {
+  [DEFAULT_MODEL_NAME]: {
     label: 'NS 1.3',
     note: 'Noise and augmentation were used during training, with MLflow tracking.',
   },
