@@ -43,6 +43,16 @@ api = Blueprint("api", __name__)
 _rate_limit_hits: dict[tuple[str, str], deque[float]] = defaultdict(deque)
 
 
+def _format_upload_limit(max_mb) -> str:
+    try:
+        max_mb = int(max_mb)
+    except (TypeError, ValueError):
+        return str(max_mb)
+    if max_mb >= 1024 and max_mb % 1024 == 0:
+        return f"{max_mb // 1024} GB"
+    return f"{max_mb} MB"
+
+
 def _client_ip() -> str:
     return (request.access_route[0] if request.access_route else request.remote_addr) or "unknown"
 
@@ -91,7 +101,7 @@ def add_security_headers(response):
 @api.errorhandler(RequestEntityTooLarge)
 def upload_too_large(_exc):
     max_mb = current_app.config.get("MAX_UPLOAD_MB", "configured")
-    return jsonify({"error": f"Uploaded file is too large. Maximum size is {max_mb} MB."}), 413
+    return jsonify({"error": f"Uploaded file is too large. Maximum size is {_format_upload_limit(max_mb)}."}), 413
 
 
 def _safe_path(base_dir: Path, filename: str) -> Path | None:
