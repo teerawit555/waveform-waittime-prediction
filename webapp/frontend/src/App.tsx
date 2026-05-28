@@ -1,10 +1,10 @@
 import { ChangeEvent, FormEvent, Suspense, lazy, useEffect, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Activity, ArrowRight, BookOpen, BrainCircuit, CheckCircle2, Database, FileCode2, FileUp, Home, KeyRound, LineChart, Lock, LogOut, PlayCircle, Rocket, Server, Settings2, ShieldCheck, SlidersHorizontal, Sparkles, TerminalSquare, Waves } from 'lucide-react';
-import { deleteModel, getJob, getMlflowConfig, getMlflowModelRegistry, getModelAudit, getModels, startPredict, startTrain, uploadFile, UploadResponse, API_BASE, ModelItem, MlflowInfo, MlflowModelRegistry } from './lib/api';
+import { deleteModel, getJob, getMlflowConfig, getMlflowModelRegistry, getModelAudit, getModels, startPredict, startTrain, uploadFile, UploadResponse, API_BASE, ModelItem, MlflowInfo, MlflowModelRegistry, MlflowModelVersion } from './lib/api';
 import StatCard from './components/StatCard';
 import DataTable from './components/DataTable';
-import { formatModelName, getModelNote, shouldHideModel } from './lib/modelDisplay';
+import { DEFAULT_MODEL_NAME, formatModelName, getModelNote, shouldHideModel } from './lib/modelDisplay';
 import { HeroWaveformGraphic } from './components/HeroWaveformGraphic';
 
 const FeatureImportanceSection = lazy(() => import('./components/FeatureImportanceSection'));
@@ -17,7 +17,6 @@ const WorkflowSection = lazy(() => import('./components/WorkflowSection'));
 type WorkspaceView = 'home' | 'prediction' | 'training' | 'registry' | 'workflow';
 type TrainingPresetKey = 'fast' | 'balanced' | 'best';
 
-const DEFAULT_MODEL_NAME = 'TCN_aug_weighted_v1';
 const ADMIN_ONLY_VIEWS = new Set<WorkspaceView>(['registry']);
 const workspaceViews: WorkspaceView[] = ['home', 'prediction', 'training', 'registry', 'workflow'];
 const trainingPresets: Record<TrainingPresetKey, {
@@ -81,6 +80,10 @@ function getModelNameFromPath(path?: string | null): string {
   return parts[parts.length - 1] || '';
 }
 
+function getRegistryVersionModelName(version?: MlflowModelVersion | null) {
+  return version?.tags?.ag_model_name || version?.version_tags?.ag_model_name || version?.run_name || '';
+}
+
 function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>(getInitialWorkspaceView);
   const [dataset, setDataset] = useState<UploadResponse | null>(null);
@@ -125,7 +128,7 @@ function App() {
 
   const [modelName, setModelName] = useState('wave_model_v1');
   const [models, setModels] = useState<ModelItem[]>([]);
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL_NAME); // predict
+  const [selectedModel, setSelectedModel] = useState(''); // predict
   const [selectedTrainModel, setSelectedTrainModel] = useState(''); // train
   const [modelsLoading, setModelsLoading] = useState(false);
   const [isTrainingEnabled, setIsTrainingEnabled] = useState(true);
@@ -144,6 +147,13 @@ function App() {
   const mlflowInfo = (jobMlflowInfo?.run_id || jobMlflowInfo?.latest_run_id)
     ? jobMlflowInfo
     : (mlflowConfig ?? jobMlflowInfo);
+  const readyModelNames = useMemo(() => new Set(models.map((model) => model.name)), [models]);
+  const currentRegistryVersions = useMemo(() => {
+    return (modelRegistry?.versions ?? []).filter((version) => {
+      const modelName = getRegistryVersionModelName(version);
+      return modelName && readyModelNames.has(modelName) && !shouldHideModel(modelName);
+    });
+  }, [modelRegistry, readyModelNames]);
   const canConfigureTraining = trainingSource === 'split' || !!dataset;
   const isTerminalJob = (job: any) => job?.status === 'completed' || job?.status === 'failed';
 
@@ -167,7 +177,7 @@ function App() {
 
       setSelectedModel((current) => {
         if (current && readyModels.some((model) => model.name === current)) return current;
-        return readyModels.find((model) => model.name === DEFAULT_MODEL_NAME)?.name ?? readyModels[0]?.name ?? DEFAULT_MODEL_NAME;
+        return readyModels.find((model) => model.name === DEFAULT_MODEL_NAME)?.name ?? readyModels[0]?.name ?? '';
       });
 
       // Auto-redirect if on training page but training is disabled
@@ -695,7 +705,10 @@ useEffect(() => {
       setError(null);
       await deleteModel(modelToDelete, adminToken);
 
-      if (selectedModel === modelToDelete) setSelectedModel(DEFAULT_MODEL_NAME);
+      if (selectedModel === modelToDelete) {
+        const fallbackModel = models.find((model) => model.name !== modelToDelete)?.name ?? '';
+        setSelectedModel(fallbackModel);
+      }
       if (selectedTrainModel === modelToDelete) {
         setSelectedTrainModel('');
         setTrainJob(null);
@@ -834,10 +847,12 @@ useEffect(() => {
   const predictStatusLabel = predictJob?.status
     ? `${predictJob.status}${predictJob.progress != null ? ` / ${predictJob.progress}%` : ''}`
     : 'Ready';
-  const bestModelLabel = modelRegistry?.best_version
-    ? `v${modelRegistry.best_version}`
-    : (selectedModel ? formatModelName(selectedModel) : 'None');
-  const selectedModelLabel = selectedModel ? formatModelName(selectedModel) : 'Not Selected';
+  const bestRegistryVersion = currentRegistryVersions.find((version) => version.version === modelRegistry?.best_version)
+    ?? currentRegistryVersions[0];
+  const hasReadyModels = models.length > 0;
+  const bestRegistryModelName = getRegistryVersionModelName(bestRegistryVersion) || selectedModel;
+  const bestModelLabel = hasReadyModels && (bestRegistryVersion || selectedModel) ? formatModelName(bestRegistryModelName) : 'None';
+  const selectedModelLabel = hasReadyModels && selectedModel ? formatModelName(selectedModel) : 'No model available';
   const selectedTrainModelNote = getModelNote(selectedTrainModel);
   const predictEndpoint = `${API_BASE}/predict`;
   const adminStatusLabel = isAdminUnlocked ? 'Admin Unlocked' : 'Admin Locked';
@@ -1023,7 +1038,7 @@ useEffect(() => {
                   <strong>{models.length}</strong>
                 </div>
                 <div>
-                  <span>Best Version</span>
+                  <span>Best Model</span>
                   <strong>{bestModelLabel}</strong>
                 </div>
                 <div>
@@ -1092,7 +1107,7 @@ Content-Type: application/json
                   <button type="button" className="landing-feature-card" onClick={() => setActiveView('registry')}>
                     <Database size={20} />
                     <span>Models</span>
-                    <strong>Compare MLflow versions and candidate metrics.</strong>
+                    <strong>Review model registry and candidate metrics.</strong>
                   </button>
                   <button type="button" className="landing-feature-card" onClick={() => setActiveView('workflow')}>
                     <BookOpen size={20} />
@@ -1534,7 +1549,7 @@ Content-Type: application/json
           <div className="view-heading">
             <div>
               <span className="view-kicker">Models & Runs</span>
-              <h2>Compare registered model versions</h2>
+              <h2>Monitor the model registry</h2>
             </div>
             <div className="view-chip"><Database size={15} /> {modelRegistry?.registered_model_name || 'Registry'}</div>
           </div>
