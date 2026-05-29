@@ -38,7 +38,7 @@ CORS_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
-MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "2048"))
 MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 RATE_LIMIT_DEFAULT = int(os.getenv("RATE_LIMIT_DEFAULT", "120"))

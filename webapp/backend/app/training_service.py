@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import uuid
 import sys
+import shutil
 import pandas as pd
 import json
 import os
@@ -80,6 +81,29 @@ def run_cmd(cmd: list[str]):
         check=True,
     )
     return result.stdout
+
+
+def _is_relative_to(path: Path, base: Path) -> bool:
+    try:
+        path.resolve().relative_to(base.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def cleanup_failed_model_dirs(paths: list[Path]) -> list[str]:
+    removed: list[str] = []
+    allowed_roots = (AUTOGLUON_DIR, TCN_DIR)
+    for path in paths:
+        if not path:
+            continue
+        resolved = path.resolve()
+        if not any(_is_relative_to(resolved, root) for root in allowed_roots):
+            continue
+        if resolved.exists():
+            shutil.rmtree(resolved, ignore_errors=True)
+            removed.append(str(resolved))
+    return removed
 
 
 def list_pngs(base: Path, job_id: str, category: str):
@@ -527,6 +551,7 @@ class TrainingService:
         ถ้าล้มเหลวจะ catch error แล้ว set status = "failed"
         """
         mlflow_session = None
+        cleanup_model_dirs: list[Path] = []
         try:
             job_store.update(job_id, status="running", progress=5, message="Starting clean split pipeline")
 
@@ -570,6 +595,9 @@ class TrainingService:
                 raise Exception(f"TCN model name already exists: {tcn_model_name}")
             if not train_new_tcn and not model_dir.exists():
                 raise Exception(f"TCN model not found: {tcn_model_name}")
+            cleanup_model_dirs = [ag_model_dir]
+            if train_new_tcn:
+                cleanup_model_dirs.append(model_dir)
 
             mlflow_session = begin_training_run(
                 run_name=ag_model_name,
@@ -1009,6 +1037,9 @@ class TrainingService:
 
         except subprocess.CalledProcessError as e:
             err = e.stderr or e.stdout or str(e)
+            removed_dirs = cleanup_failed_model_dirs(cleanup_model_dirs)
+            if removed_dirs:
+                err += "\n\n[cleanup] Removed failed model artifacts:\n" + "\n".join(removed_dirs)
             mlflow_set_tags({"status": "failed", "failure_type": "subprocess", "error": err[:500]})
             if mlflow_session is not None:
                 mlflow_session.end("FAILED")
@@ -1021,7 +1052,11 @@ class TrainingService:
                 error=err,
             )
         except Exception as e:
-            mlflow_set_tags({"status": "failed", "failure_type": "exception", "error": str(e)[:500]})
+            err = str(e)
+            removed_dirs = cleanup_failed_model_dirs(cleanup_model_dirs)
+            if removed_dirs:
+                err += "\n\n[cleanup] Removed failed model artifacts:\n" + "\n".join(removed_dirs)
+            mlflow_set_tags({"status": "failed", "failure_type": "exception", "error": err[:500]})
             if mlflow_session is not None:
                 mlflow_session.end("FAILED")
             job_store.update(
@@ -1029,7 +1064,7 @@ class TrainingService:
                 status="failed",
                 progress=100,
                 message="Training failed",
-                error=str(e),
+                error=err,
             )
 
 

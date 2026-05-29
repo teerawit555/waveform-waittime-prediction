@@ -224,6 +224,9 @@ def main() -> None:
         fit_kwargs["train_data"] = frame_for_autogluon(train_fit, feature_cols, label_fit)
     if valid_fit is not None:
         fit_kwargs["tuning_data"] = frame_for_autogluon(valid_fit, feature_cols, label_fit)
+        if "use_bag_holdout" in inspect.signature(TabularPredictor.fit).parameters:
+            fit_kwargs["use_bag_holdout"] = True
+            log("use_bag_holdout=True because validation data is provided.", log_path)
 
     predictor = TabularPredictor(
         label=label_fit,
