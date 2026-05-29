@@ -67,6 +67,11 @@ def log(msg: str, path: str) -> None:
         f.write(msg.rstrip() + "\n")
 
 
+def fit_accepts_kwarg(name: str) -> bool:
+    params = inspect.signature(TabularPredictor.fit).parameters
+    return name in params or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values())
+
+
 def group_split(df: pd.DataFrame, group_col: str, test_frac: float, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
     ids = df[group_col].drop_duplicates().to_numpy()
     rng = np.random.default_rng(seed)
@@ -224,7 +229,7 @@ def main() -> None:
         fit_kwargs["train_data"] = frame_for_autogluon(train_fit, feature_cols, label_fit)
     if valid_fit is not None:
         fit_kwargs["tuning_data"] = frame_for_autogluon(valid_fit, feature_cols, label_fit)
-        if "use_bag_holdout" in inspect.signature(TabularPredictor.fit).parameters:
+        if fit_accepts_kwarg("use_bag_holdout"):
             fit_kwargs["use_bag_holdout"] = True
             log("use_bag_holdout=True because validation data is provided.", log_path)
 
