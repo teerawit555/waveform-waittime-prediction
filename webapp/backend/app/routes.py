@@ -386,7 +386,10 @@ def plot_wave_on_demand():
 
 @api.route("/models", methods=["GET"])
 def get_models():
-    models = list_available_models()
+    ready_models = [model for model in list_available_models() if model.get("ready")]
+    models = ready_models if is_admin_request() else [
+        model for model in ready_models if model.get("name") == DEFAULT_MODEL_NAME
+    ]
     return jsonify({
         "default_model": DEFAULT_MODEL_NAME,
         "models": models,
