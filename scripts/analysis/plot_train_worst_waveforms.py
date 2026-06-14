@@ -56,11 +56,11 @@ def main() -> None:
 
         plt.xlabel("time_ms")
         plt.ylabel("value")
-        plt.title(f"wave_id={int(wave_id)} | abs_error={abs_error:.4f} ms")
+        plt.title(f"wave_id={wave_id} | abs_error={abs_error:.4f} ms")
         plt.legend()
         plt.tight_layout()
 
-        save_path = outdir / f"wave_{int(wave_id)}.png"
+        save_path = outdir / f"wave_{wave_id}.png"
         plt.savefig(save_path, dpi=180)
         plt.close()
         count += 1

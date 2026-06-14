@@ -53,9 +53,7 @@ def signal_wide_to_long(df: pd.DataFrame, sample_col: str, dt_ms: float) -> pd.D
         if paired_sample_col is None:
             return None
 
-        name = str(col).rstrip(":")
-        numeric_part = "".join(filter(str.isdigit, name))
-        wave_id = int(numeric_part) if numeric_part else index
+        wave_id = str(col).rstrip(":")
         samples = pd.to_numeric(df[paired_sample_col], errors="raise").astype(int).to_numpy()
         values = pd.to_numeric(df[col], errors="raise").to_numpy(float)
         rows.append(

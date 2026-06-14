@@ -18,10 +18,8 @@ def signal_wide_to_long(df: pd.DataFrame, sample_col: str = "Signal", dt_ms: flo
 
     samples = pd.to_numeric(df[sample_col], errors="raise").astype(int).to_numpy()
     rows = []
-    for index, col in enumerate(value_cols, start=1):
-        name = str(col).rstrip(":")
-        numeric_part = "".join(filter(str.isdigit, name))
-        wave_id = int(numeric_part) if numeric_part else index
+    for col in value_cols:
+        wave_id = str(col).rstrip(":")
         rows.append(pd.DataFrame({
             "wave_id": wave_id,
             "sample": samples,
@@ -126,7 +124,7 @@ def main() -> None:
         plt.plot(t, x, linewidth=1.5, color="#00528A", label="waveform")
         if true_ms is not None:
             plt.axvline(true_ms, color="#00AEEF", linestyle="-", linewidth=2.2, label=f"label = {true_ms:.4f} ms")
-        plt.axvline(pred_ms, color="#F59E0B", linestyle="--", linewidth=2.2, label=f"prediction = {pred_ms:.4f} ms")
+        plt.axvline(pred_ms, color="#EF4444", linestyle="--", linewidth=2.2, label=f"prediction = {pred_ms:.4f} ms")
         plt.xlabel("time_ms")
         plt.ylabel("value")
         suffix = f" | abs error={abs_error:.4f} ms" if abs_error is not None else ""
