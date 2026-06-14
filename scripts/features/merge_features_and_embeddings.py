@@ -19,6 +19,9 @@ def main() -> None:
     if "wave_id" not in feat.columns or "wave_id" not in emb.columns:
         raise KeyError("Both files must contain wave_id")
 
+    feat["wave_id"] = feat["wave_id"].astype(str)
+    emb["wave_id"] = emb["wave_id"].astype(str)
+
     out = feat.merge(emb, on="wave_id", how="inner", validate="one_to_one")
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(args.out, index=False)

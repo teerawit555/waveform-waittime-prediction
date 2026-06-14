@@ -101,18 +101,9 @@ def convert_wide_to_long(
 
     print(f"Found {len(value_cols)} waves: {value_cols}")
 
-    # แปลง wide → long ด้วย pd.melt (เร็วกว่า loop)
-    # สร้าง mapping: wave_id → numeric id
-    id_map: dict[str, int] = {}
-    for vc in value_cols:
-        # 'Signal1:' → ดึงตัวเลขออกมา
-        name = vc.rstrip(":")          # 'Signal1'
-        numeric_part = "".join(filter(str.isdigit, name))
-        id_map[vc] = int(numeric_part) if numeric_part else (list(id_map.values())[-1] + 1 if id_map else 1)
-
     rows_list = []
     for vc in value_cols:
-        wave_id = id_map[vc]
+        wave_id = vc.rstrip(":")
         values = df[vc].to_numpy(float)
         chunk = pd.DataFrame(
             {

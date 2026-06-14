@@ -36,10 +36,8 @@ def signal_wide_to_long(df: pd.DataFrame, sample_col: str = "Signal", dt_ms: flo
 
     samples = pd.to_numeric(df[sample_col], errors="raise").astype(int).to_numpy()
     rows = []
-    for index, col in enumerate(value_cols, start=1):
-        name = str(col).rstrip(":")
-        numeric_part = "".join(filter(str.isdigit, name))
-        wave_id = int(numeric_part) if numeric_part else index
+    for col in value_cols:
+        wave_id = str(col).rstrip(":")
         rows.append(pd.DataFrame({
             "wave_id": wave_id,
             "sample": samples,
@@ -248,7 +246,7 @@ def main() -> None:
             x_rs = normalize_wave(x_rs, mode=args.normalize)
 
         waves.append(x_rs.astype(np.float32))
-        wave_ids.append(int(wave_id))
+        wave_ids.append(wave_id)
 
         # extract label
         y = extract_wave_label(g, args.label_col)
@@ -261,7 +259,10 @@ def main() -> None:
     # stack waveform tensor
     X = np.stack(waves, axis=0)  # shape: (N, L)
 
-    wave_ids_arr = np.asarray(wave_ids, dtype=np.int64)
+    try:
+        wave_ids_arr = np.asarray(wave_ids, dtype=np.int64)
+    except (ValueError, TypeError):
+        wave_ids_arr = np.asarray(wave_ids, dtype=object)
     y_arr = np.asarray(labels, dtype=np.float32)
 
     # =========================

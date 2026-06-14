@@ -442,7 +442,7 @@ def extract_one_wave(g: pd.DataFrame, mode: str) -> dict[str, float | int | str]
     feats = _clip_feats(feats)
 
     out: dict[str, float | int | str] = {
-        "wave_id": int(g["wave_id"].iloc[0]),
+        "wave_id": g["wave_id"].iloc[0],
         **feats,
     }
 
@@ -676,10 +676,8 @@ def signal_wide_to_long(df: pd.DataFrame, sample_col: str = "Signal", dt_ms: flo
 
     samples = pd.to_numeric(df[sample_col], errors="raise").astype(int).to_numpy()
     rows = []
-    for index, col in enumerate(value_cols, start=1):
-        name = str(col).rstrip(":")
-        numeric_part = "".join(filter(str.isdigit, name))
-        wave_id = int(numeric_part) if numeric_part else index
+    for col in value_cols:
+        wave_id = str(col).rstrip(":")
         rows.append(pd.DataFrame({
             "wave_id": wave_id,
             "sample": samples,
