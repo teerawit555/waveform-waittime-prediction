@@ -93,9 +93,12 @@ def main() -> None:
     model.load_state_dict(ckpt["state_dict"])
     model.eval().to(args.device)
 
-    d = np.load(args.waves)
+    d = np.load(args.waves, allow_pickle=True)
     X = d["X"].astype(np.float32)
-    wave_id = d["wave_id"].astype(np.int64)
+    try:
+        wave_id = d["wave_id"].astype(np.int64)
+    except (ValueError, TypeError):
+        wave_id = d["wave_id"]
 
     ds = WaveOnlyDataset(X)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False)

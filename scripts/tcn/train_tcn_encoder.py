@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import json
@@ -58,7 +58,10 @@ class WaveDataset(Dataset):
     ):
         self.X = torch.tensor(X, dtype=torch.float32).unsqueeze(1)  # (N,1,L)
         self.y = torch.tensor(y, dtype=torch.float32)
-        self.wave_id = torch.tensor(wave_id)
+        try:
+            self.wave_id = torch.tensor(wave_id)
+        except (ValueError, TypeError):
+            self.wave_id = wave_id
         if sample_weight is None:
             sample_weight = np.ones(len(y), dtype=np.float32)
         self.sample_weight = torch.tensor(sample_weight, dtype=torch.float32)
@@ -363,11 +366,13 @@ def predict(model, loader, device, out_dir, name="test"):
 
             all_pred.append(pred_real.cpu())
             all_true.append(true_real.cpu())
-            wave_ids.append(wid.cpu())
+            if torch.is_tensor(wid):
+                wave_ids.extend(wid.cpu().numpy())
+            else:
+                wave_ids.extend(wid)
 
     pred_all = torch.cat(all_pred)
     true_all = torch.cat(all_true)
-    wave_ids = torch.cat(wave_ids)
 
     mae = torch.mean(torch.abs(pred_all - true_all))
     rmse = torch.sqrt(torch.mean((pred_all - true_all)**2))
@@ -376,7 +381,7 @@ def predict(model, loader, device, out_dir, name="test"):
     print(f"[{name}] RMSE: {rmse.item():.6f}")
 
     df = pd.DataFrame({
-        "wave_id": wave_ids.numpy(),
+        "wave_id": wave_ids,
         "true_wait_time": true_all.numpy(),
         "pred_wait_time": pred_all.numpy(),
         "error": (pred_all - true_all).numpy()
@@ -398,10 +403,13 @@ def sample_weights(y_real: np.ndarray, fast_ms: float, fast_weight: float) -> np
 
 
 def load_tensor(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    d = np.load(path)
+    d = np.load(path, allow_pickle=True)
     X = d["X"].astype(np.float32)
     y = d["y"].astype(np.float32)
-    wave_id = d["wave_id"].astype(np.int64)
+    try:
+        wave_id = d["wave_id"].astype(np.int64)
+    except (ValueError, TypeError):
+        wave_id = d["wave_id"]
     mask = np.isfinite(y)
     return X[mask], y[mask], wave_id[mask]
 

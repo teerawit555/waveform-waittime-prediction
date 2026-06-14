@@ -47,6 +47,11 @@ def main() -> None:
     wave_id = df["wave_id"] if "wave_id" in df.columns else pd.Series(np.arange(len(df)))
 
     df_feat = df.drop(columns=COLS_TO_DROP + LABEL_LEAK_COLS, errors="ignore").copy()
+    if "wave_id" in df_feat.columns:
+        try:
+            pd.to_numeric(df_feat["wave_id"], errors="raise")
+        except (ValueError, TypeError):
+            df_feat["wave_id"] = np.arange(len(df_feat), dtype=float)
     X = align_columns(df_feat, feature_cols)
 
     print(f"[4/5] predicting rows={len(X)}...")
