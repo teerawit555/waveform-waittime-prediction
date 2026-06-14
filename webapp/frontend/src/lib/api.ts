@@ -1,6 +1,7 @@
 // const API_BASE = 'http://localhost:5000/api';
 
-export const API_BASE = 'http://localhost:5000/api';
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+export const API_BASE = isLocal ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
 
 export type UploadResponse = {
   upload_id: string;
@@ -213,5 +214,6 @@ export async function getModelAudit(modelName: string, adminToken?: string, topk
 export function toFileUrl(relativePath?: string | null) {
   if (!relativePath) return '';
   if (relativePath.startsWith('http')) return relativePath;
-  return `http://localhost:5000${relativePath}`;
+  const base = isLocal ? 'http://localhost:5000' : window.location.origin;
+  return `${base}${relativePath}`;
 }
