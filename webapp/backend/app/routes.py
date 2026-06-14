@@ -259,6 +259,20 @@ def start_predict():
     return jsonify({"job_id": job_id})
 
 
+@api.route("/predict-sync", methods=["POST"])
+def predict_sync():
+    try:
+        payload = _json_payload()
+        result = PredictionService.predict_single_waveform(payload)
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
 @api.route("/jobs", methods=["GET"])
 def list_jobs():
     auth_error = require_admin()
