@@ -1,0 +1,26 @@
+==============================================================================================================
+NEUROSETTLE API LATENCY BENCHMARK TOOL
+==============================================================================================================
+Targeting Backend API: http://127.0.0.1:5000/api
+Targeting Model Name: Aug_best_old_data_v1
+--------------------------------------------------------------------------------------------------------------
+Loading real waveforms from data\data_for_pred.csv...
+Successfully loaded 731 real waveforms from data\data_for_pred.csv.
+--------------------------------------------------------------------------------------------------------------
+Performing warm-up request to load the model in memory...
+Warm-up complete!
+Benchmarking /predict-sync (Single waveform, 30 runs)...
+Benchmarking /predict-batch-sync (Batch size 10, 20 runs)...
+Benchmarking /predict-batch-sync (Batch size 50, 10 runs)...
+Benchmarking /health (Service heartbeat, 30 runs)...
+
+==============================================================================================================
+BENCHMARK RESULTS SUMMARY
+==============================================================================================================
+Single Waveform (/predict-sync)     | Mean: 1779.01ms | Median: 1806.17ms | P95: 2101.05ms | Min: 1427.21ms | Max: 2628.31ms | Std: 237.17ms
+Batch of 10 (/predict-batch-sync)   | Mean: 1931.46ms | Median: 1895.95ms | P95: 2138.07ms | Min: 1698.17ms | Max: 2301.77ms | Std: 170.39ms
+Batch of 50 (/predict-batch-sync)   | Mean: 2542.61ms | Median: 2548.91ms | P95: 2715.01ms | Min: 2367.42ms | Max: 2715.01ms | Std: 125.27ms
+Heartbeat check (/health)           | Mean:   4.33ms | Median:   4.30ms | P95:   5.73ms | Min:   2.34ms | Max:   5.91ms | Std:  0.85ms
+Batch of 10 (per waveform cost)     | Avg:  193.15ms per wave
+Batch of 50 (per waveform cost)     | Avg:   50.85ms per wave
+==============================================================================================================
