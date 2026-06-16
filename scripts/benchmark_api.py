@@ -69,8 +69,9 @@ def print_stats(name, latencies):
     min_val = min(latencies) * 1000
     max_val = max(latencies) * 1000
     std = statistics.stdev(latencies) * 1000 if len(latencies) > 1 else 0.0
+    runs = len(latencies)
     
-    print(f"{name:<35} | Mean: {avg:6.2f}ms | Median: {med:6.2f}ms | P95: {p95:6.2f}ms | Min: {min_val:6.2f}ms | Max: {max_val:6.2f}ms | Std: {std:5.2f}ms")
+    print(f"{name:<35} | Runs: {runs:2d} | Mean: {avg:6.2f}ms | Median: {med:6.2f}ms | P95: {p95:6.2f}ms | Min: {min_val:6.2f}ms | Max: {max_val:6.2f}ms | Std: {std:5.2f}ms")
 
 def percentiles(data, percentile):
     size = len(data)
@@ -223,6 +224,9 @@ def main():
     print_stats("Heartbeat check (/health)", health_latencies)
     
     # Calculate per-waveform cost
+    if sync_latencies:
+        avg_1 = statistics.mean(sync_latencies) * 1000
+        print(f"{'Single Waveform (per waveform cost)':<35} | Avg:  {avg_1:6.2f}ms per wave")
     if batch10_latencies:
         avg_10 = (statistics.mean(batch10_latencies) * 1000) / 10
         print(f"{'Batch of 10 (per waveform cost)':<35} | Avg:  {avg_10:6.2f}ms per wave")
