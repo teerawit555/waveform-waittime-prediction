@@ -25,7 +25,7 @@ MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "adaptive-wait-time
 MLFLOW_LOG_MODEL_DIRS = os.getenv("MLFLOW_LOG_MODEL_DIRS", "0").lower() in {"1", "true", "yes", "on"}
 MLFLOW_REGISTERED_MODEL_NAME = os.getenv("MLFLOW_REGISTERED_MODEL_NAME", "adaptive_wait_time_hybrid")
 ADMIN_TOKEN = os.getenv("NEUROSETTLE_ADMIN_TOKEN") or os.getenv("ADMIN_TOKEN")
-DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "TCN_aug_weighted_v1")
+DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "Aug_best_old_data_v1")
 JOB_WORKERS = int(os.getenv("JOB_WORKERS", "1"))
 
 NEUROSETTLE_ENV = os.getenv("NEUROSETTLE_ENV") or os.getenv("FLASK_ENV") or "development"
