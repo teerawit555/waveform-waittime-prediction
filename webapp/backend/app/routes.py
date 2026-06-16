@@ -1,3 +1,6 @@
+# ==============================================================================
+# This file handles backend API routes and rate limiting.
+# ==============================================================================
 from __future__ import annotations
 
 import sys
@@ -38,6 +41,7 @@ from .job_queue import job_queue
 from .job_store import job_store
 from .mlflow_service import get_mlflow_runtime_status, get_model_registry_summary, get_tracking_summary
 from .training_service import PredictionService, TrainingService, build_analysis_manifest, run_cmd, SCRIPT_PATHS, list_available_models, load_ag_evaluation_data, load_tcn_history
+from .inference_service import inference_service
 
 api = Blueprint("api", __name__)
 _rate_limit_hits: dict[tuple[str, str], deque[float]] = defaultdict(deque)
@@ -133,8 +137,8 @@ def _resolve_upload_id(upload_id: str | None) -> Path:
     path = UPLOAD_DIR / safe_name
     if not path.exists() or not path.is_file():
         raise ValueError("Uploaded dataset not found")
-    if path.suffix.lower() != ".csv":
-        raise ValueError("Uploaded dataset must be a CSV file")
+    if path.suffix.lower() not in (".csv", ".xlsx"):
+        raise ValueError("Uploaded dataset must be a CSV or Excel (.xlsx) file")
     return path
 
 
@@ -263,7 +267,21 @@ def start_predict():
 def predict_sync():
     try:
         payload = _json_payload()
-        result = PredictionService.predict_single_waveform(payload)
+        result = inference_service.predict_single(payload)
+        return jsonify(result)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@api.route("/predict-batch-sync", methods=["POST"])
+def predict_batch_sync():
+    try:
+        payload = _json_payload()
+        result = inference_service.predict_batch(payload)
         return jsonify(result)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

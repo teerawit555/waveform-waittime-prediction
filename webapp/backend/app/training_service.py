@@ -1,3 +1,6 @@
+# ==============================================================================
+# This file manages asynchronous training and prediction pipelines.
+# ==============================================================================
 from __future__ import annotations
 
 import subprocess
@@ -32,6 +35,7 @@ from .config import (
     SCRIPT_FEATURES_DIR,
     SCRIPT_TCN_DIR,
     TCN_DIR,
+    UPLOAD_DIR,
 )
 from .job_store import job_store
 from .job_queue import job_queue
@@ -64,6 +68,7 @@ SCRIPT_PATHS = {
     "export_tcn_encoder": SCRIPT_TCN_DIR / "export_tcn_encoder.py",
     "train_tcn_encoder": SCRIPT_TCN_DIR / "train_tcn_encoder.py",
     "predict_single_wave": SCRIPT_TCN_DIR.parent / "pipelines" / "predict_single_wave.py",
+    "predict_batch_waves": SCRIPT_TCN_DIR.parent / "pipelines" / "predict_batch_waves.py",
 }
 
 def run_cmd(cmd: list[str]):
@@ -1321,45 +1326,3 @@ class PredictionService:
                 message="Prediction failed",
                 error=str(e),
             )
-
-    @staticmethod
-    def predict_single_waveform(payload: dict) -> dict:
-        """
-        รันทำนายผลสัญญาณเดี่ยวแบบ Synchronous และส่งคืนผลลัพธ์ทันที
-        """
-        waveform = payload.get("waveform")
-        if not waveform or not isinstance(waveform, list):
-            raise ValueError("waveform (list of floats) is required")
-
-        waveform_str = ",".join(str(float(x)) for x in waveform)
-        dt_ms = float(payload.get("dt_ms", 0.01))
-
-        model_name = sanitize_model_name(payload.get("model_name") or DEFAULT_MODEL_NAME)
-        if not model_name:
-            raise ValueError("Invalid model_name")
-
-        ag_model_dir = AUTOGLUON_DIR / model_name
-        meta_file    = ag_model_dir / "model_meta.json"
-
-        if meta_file.exists():
-            meta      = json.loads(meta_file.read_text())
-            model_dir = Path(meta["tcn_path"])
-        else:
-            model_dir = TCN_DIR / model_name
-
-        if not ag_model_dir.exists():
-            raise FileNotFoundError(f"Model {model_name} not found")
-
-        cmd = [
-            sys.executable, str(SCRIPT_PATHS["predict_single_wave"]),
-            "--model-path", str(ag_model_dir),
-            "--tcn-path", str(model_dir),
-            "--waveform", waveform_str,
-            "--dt-ms", str(dt_ms)
-        ]
-        
-        stdout_data = run_cmd(cmd)
-        try:
-            return json.loads(stdout_data.strip())
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse prediction output: {stdout_data}. Error: {e}")
