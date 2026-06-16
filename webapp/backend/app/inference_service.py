@@ -40,6 +40,20 @@ class InferenceService:
         self._lock = threading.Lock()
         self._log_path = Path(__file__).resolve().parent.parent / "inference_latency.log"
 
+        # Pre-warm/preload the default model in a background thread to avoid cold start latency
+        threading.Thread(
+            target=self._prewarm_default_model,
+            daemon=True,
+            name="ModelPrewarmThread"
+        ).start()
+
+    def _prewarm_default_model(self) -> None:
+        try:
+            self._get_models(DEFAULT_MODEL_NAME)
+            print(f"[INFO] Successfully pre-warmed default model: {DEFAULT_MODEL_NAME}", file=sys.stderr)
+        except Exception as e:
+            print(f"[WARN] Failed to pre-warm default model: {e}", file=sys.stderr)
+
     def _log_latency(self, model_name: str, endpoint: str, count: int, latency_ms: float) -> None:
         try:
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
