@@ -1087,6 +1087,67 @@ Content-Type: application/json
             </div>
           </section>
 
+          {/* ── Test Program API Section ── */}
+          <section className="landing-api-panel landing-testprog-section">
+            <div className="landing-section-heading">
+              <span className="view-kicker"><TerminalSquare size={14} /> Test Program Integration</span>
+              <h2>Real-time inference for ATE and test programs.</h2>
+            </div>
+            <div className="landing-api-grid landing-testprog-grid">
+
+              {/* predict-sync card */}
+              <article className="landing-code-card">
+                <div className="landing-code-head">
+                  <Waves size={17} />
+                  <span>Single Waveform — Real-time</span>
+                  <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--fg-muted, #8892b0)', fontFamily: 'monospace' }}>~250ms</span>
+                </div>
+                <pre><code>{`POST ${API_BASE}/predict-sync
+Content-Type: application/json
+
+{
+  "waveform": [0.012, -0.45, 0.89, ...],
+  "dt_ms": 0.01,
+  "model_name": "${selectedModel || 'Aug_best_old_data_v1'}"
+}
+
+// Response:
+{
+  "pred_wait_time_ms": 0.089,
+  "pred_is_fast_at_0p1": 1
+}`}</code></pre>
+              </article>
+
+              {/* predict-batch-sync card */}
+              <article className="landing-code-card">
+                <div className="landing-code-head">
+                  <Activity size={17} />
+                  <span>Batch Waveforms — Recommended</span>
+                  <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--fg-muted, #8892b0)', fontFamily: 'monospace' }}>~16ms/wave</span>
+                </div>
+                <pre><code>{`POST ${API_BASE}/predict-batch-sync
+Content-Type: application/json
+
+{
+  "waveforms": [
+    { "wave_id": "W001", "data": [0.02, -0.1, ...] },
+    { "wave_id": "W002", "data": [0.05,  0.01, ...] }
+  ],
+  "dt_ms": 0.01,
+  "model_name": "${selectedModel || 'Aug_best_old_data_v1'}"
+}
+
+// Response:
+{ "predictions": [
+    { "wave_id": "W001", "pred_wait_time_ms": 0.089, "pred_is_fast_at_0p1": 1 },
+    { "wave_id": "W002", "pred_wait_time_ms": 1.23,  "pred_is_fast_at_0p1": 0 }
+] }`}</code></pre>
+              </article>
+
+            </div>
+          </section>
+
+
           <section className={`landing-capabilities ${isAdminUnlocked ? 'is-admin' : 'is-public'}`}>
             <div className="landing-section-heading">
               <span className="view-kicker">Workspace Map</span>
