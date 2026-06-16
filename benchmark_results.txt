@@ -1,0 +1,63 @@
+==============================================================================================================
+NEUROSETTLE API LATENCY BENCHMARK TOOL - DETAILED REPORT
+==============================================================================================================
+Targeting Backend API: http://127.0.0.1:5000/api
+Targeting Model Name: Aug_best_old_data_v1
+--------------------------------------------------------------------------------------------------------------
+
+TEST SETUP & DATA SPECIFICATIONS:
+- The benchmark was executed against the active Flask backend on the local environment.
+- Input Data: For each waveform, mock time-series signal data was generated in memory consisting of 1,000 points 
+  (random float values between -1.0 and 1.0).
+- Models Loaded: PyTorch TCN encoder (checkpoint model weights) and AutoGluon TabularPredictor ensemble.
+
+TEST EXECUTION PROTOCOL:
+1. Warm-up Run:
+   - 1 run x 1 waveform (Total: 1 wave) to lazy-load models into the in-memory cache.
+2. Single Waveform (/predict-sync):
+   - 30 separate runs/requests (Total: 30 waves predicted).
+   - Each request sent 1 waveform (1,000 points) to the server.
+   - 0.05s delay between requests.
+3. Batch of 10 (/predict-batch-sync):
+   - 20 separate runs/requests (Total: 200 waves predicted).
+   - Each request packaged 10 waveforms (10 x 1,000 = 10,000 points) in a list and sent them together.
+   - 0.05s delay between requests.
+4. Batch of 50 (/predict-batch-sync):
+   - 10 separate runs/requests (Total: 500 waves predicted).
+   - Each request packaged 50 waveforms (50 x 1,000 = 50,000 points) in a list and sent them together.
+   - 0.05s delay between requests.
+5. Heartbeat check (/health):
+   - 30 separate runs/requests (GET requests to verify baseline server heartbeat latency).
+
+==============================================================================================================
+BENCHMARK RESULTS SUMMARY
+==============================================================================================================
+Single Waveform (/predict-sync)     | Mean: 1626.88ms | Median: 1600.51ms | P95: 1913.92ms | Min: 1392.64ms | Max: 2011.18ms | Std: 156.50ms
+Batch of 10 (/predict-batch-sync)   | Mean: 1682.97ms | Median: 1658.43ms | P95: 1841.33ms | Min: 1474.40ms | Max: 1992.05ms | Std: 129.44ms
+Batch of 50 (/predict-batch-sync)   | Mean: 2137.57ms | Median: 2124.16ms | P95: 2255.44ms | Min: 2025.06ms | Max: 2255.44ms | Std:  94.21ms
+Heartbeat check (/health)           | Mean:   3.51ms | Median:   3.37ms | P95:   4.89ms | Min:   2.61ms | Max:   4.90ms | Std:  0.67ms
+
+AVERAGE PER-WAVEFORM COMPUTATION COST:
+- Single Waveform:                    Avg: 1626.88ms per wave
+- Batch of 10:                        Avg:  168.30ms per wave
+- Batch of 50:                        Avg:   42.75ms per wave
+==============================================================================================================
+
+OBSERVATIONS & ANALYSIS:
+1. Significant Improvement over Subprocesses:
+   - Previously, running prediction scripts as subprocesses took 3–7 seconds per request because Python 
+     initialized, imported libraries ('torch', 'autogluon'), and reloaded model weights from disk on every single run.
+   - The in-memory cache singleton architecture completely removes Python startup and library import overhead.
+
+2. Fixed Ensemble Prediction Overhead:
+   - AutoGluon's prediction process on CPU has a constant preparation overhead of ~1.4 - 1.5 seconds.
+   - Whether making a prediction for 1 wave or 10 waves, the engine spends roughly the same amount of time 
+     managing thread pools and aligning internal ensemble structures. 
+   - Consequently, sending waves in batches allows this fixed overhead to be amortized/shared across many waveforms, 
+     bringing the average cost down to only 42.75ms per wave for a batch of 50.
+
+3. Optimization (Pending Backend Restart):
+   - We have implemented 'predictor.persist()' in the InferenceService loading logic. This forces AutoGluon to keep 
+     all ensemble model weights warm in RAM rather than dynamically loading them on demand.
+   - Once the Flask backend is restarted to load this change, the 1.4 - 1.5 second constant overhead during prediction 
+     is expected to decrease significantly, offering even faster speeds.
