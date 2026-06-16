@@ -41,7 +41,19 @@ def read_signal_table(path: Path) -> pd.DataFrame:
     if suffix == ".csv":
         return pd.read_csv(path)
     if suffix == ".xlsx":
-        return pd.read_excel(path)
+        xls = pd.ExcelFile(path)
+        for sheet_name in xls.sheet_names:
+            df = pd.read_excel(xls, sheet_name=sheet_name)
+            # Long format check
+            if {"wave_id", "sample", "value"}.issubset(df.columns):
+                print(f"[Info] Found matching sheet: '{sheet_name}' (Long format)")
+                return df
+            # Wide format check
+            if "Signal" in df.columns and any(str(c).endswith(":") for c in df.columns):
+                print(f"[Info] Found matching sheet: '{sheet_name}' (Wide format)")
+                return df
+        print(f"[Warning] No sheet matched the expected schema. Defaulting to first sheet: '{xls.sheet_names[0]}'")
+        return pd.read_excel(xls, sheet_name=xls.sheet_names[0])
     raise ValueError(f"Unsupported input file type: {suffix}. Use .csv or .xlsx.")
 
 

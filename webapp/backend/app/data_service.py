@@ -6,7 +6,7 @@ import pandas as pd
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
-SUPPORTED_UPLOAD_SUFFIXES = {".csv"}
+SUPPORTED_UPLOAD_SUFFIXES = {".csv", ".xlsx"}
 REQUIRED_WAVEFORM_COLUMNS = {"wave_id", "sample", "time_ms", "value"}
 WIDE_SIGNAL_COLUMNS = {"Signal"}
 
@@ -136,7 +136,23 @@ def build_preview_from_file(path: Path, chunksize: int = 200_000) -> dict:
         preview = build_preview_from_csv(path, chunksize=chunksize)
         validate_waveform_columns(preview["columns"])
         return preview
-    raise ValueError(f"Unsupported file type '{suffix}'. Upload a CSV file.")
+    elif suffix == ".xlsx":
+        xls = pd.ExcelFile(path)
+        df = None
+        for sheet_name in xls.sheet_names:
+            temp_df = pd.read_excel(xls, sheet_name=sheet_name)
+            try:
+                validate_waveform_columns(temp_df.columns)
+                df = temp_df
+                break
+            except ValueError:
+                continue
+        if df is None:
+            df = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
+            validate_waveform_columns(df.columns)
+        preview = build_preview(df)
+        return preview
+    raise ValueError(f"Unsupported file type '{suffix}'. Upload a CSV or Excel file.")
 
 
 def validate_waveform_columns(columns: list[str]) -> None:

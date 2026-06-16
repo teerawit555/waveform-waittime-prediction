@@ -19,6 +19,7 @@ SCRIPT_TCN_DIR = SCRIPTS_DIR / "tcn"
 SCRIPT_AUTOGLUON_DIR = SCRIPTS_DIR / "autogluon"
 SCRIPT_ANALYSIS_DIR = SCRIPTS_DIR / "analysis"
 
+os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", (PROJECT_ROOT / "mlruns").as_uri())
 MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "adaptive-wait-time")
 MLFLOW_LOG_MODEL_DIRS = os.getenv("MLFLOW_LOG_MODEL_DIRS", "0").lower() in {"1", "true", "yes", "on"}
@@ -30,11 +31,28 @@ JOB_WORKERS = int(os.getenv("JOB_WORKERS", "1"))
 NEUROSETTLE_ENV = os.getenv("NEUROSETTLE_ENV") or os.getenv("FLASK_ENV") or "development"
 IS_PRODUCTION = NEUROSETTLE_ENV.lower() in {"prod", "production"}
 TRAINING_ENABLED = os.getenv("ENABLE_TRAINING", "0" if IS_PRODUCTION else "1").lower() in {"1", "true", "yes", "on"}
+def _get_local_ip() -> str | None:
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return None
+
+local_ip = _get_local_ip()
+default_origins = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173"
+if local_ip:
+    default_origins += f",http://{local_ip}:5173,http://{local_ip}:4173"
+
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
         "NEUROSETTLE_CORS_ORIGINS",
-        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+        default_origins,
     ).split(",")
     if origin.strip()
 ]
