@@ -1,7 +1,17 @@
 // const API_BASE = 'http://localhost:5000/api';
 
-const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-export const API_BASE = isLocal ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
+const isLocal =
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1' ||
+  window.location.hostname.startsWith('10.') ||
+  window.location.hostname.startsWith('192.168.') ||
+  window.location.hostname.startsWith('172.') ||
+  window.location.hostname.startsWith('127.') ||
+  window.location.port === '5173' ||
+  window.location.port === '4173';
+
+const defaultApiBase = isLocal ? `http://${window.location.hostname}:5000/api` : `${window.location.origin}/api`;
+export const API_BASE = ((import.meta as any).env?.VITE_API_URL as string) || defaultApiBase;
 
 export type UploadResponse = {
   upload_id: string;
@@ -214,6 +224,6 @@ export async function getModelAudit(modelName: string, adminToken?: string, topk
 export function toFileUrl(relativePath?: string | null) {
   if (!relativePath) return '';
   if (relativePath.startsWith('http')) return relativePath;
-  const base = isLocal ? 'http://localhost:5000' : window.location.origin;
+  const base = API_BASE.endsWith('/api') ? API_BASE.slice(0, -4) : API_BASE;
   return `${base}${relativePath}`;
 }

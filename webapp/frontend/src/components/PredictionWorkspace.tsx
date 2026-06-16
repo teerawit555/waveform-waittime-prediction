@@ -263,10 +263,10 @@ Content-Type: application/json
 
             <div className="prediction-upload-column">
               <label className="upload-inline prediction-upload">
-                <input id="prediction-file-input" type="file" accept=".csv,text/csv" onChange={handlePredictFile} />
+                <input id="prediction-file-input" type="file" accept=".csv,text/csv,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={handlePredictFile} />
                 <span>
                   <FileUp size={18} />
-                  {predictFile ? predictFile.name : 'Choose a CSV file for prediction'}
+                  {predictFile ? predictFile.name : 'Choose a CSV or Excel file for prediction'}
                 </span>
               </label>
               {predictUpload ? (
