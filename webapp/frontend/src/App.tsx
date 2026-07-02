@@ -11,6 +11,7 @@ const FeatureImportanceSection = lazy(() => import('./components/FeatureImportan
 const ModelRegistrySection = lazy(() => import('./components/ModelRegistrySection'));
 const PredictionWorkspace = lazy(() => import('./components/PredictionWorkspace'));
 const TrainingStatusSection = lazy(() => import('./components/TrainingStatusSection'));
+const ModelLeaderboard = lazy(() => import('./components/ModelLeaderboard'));
 const WaveformGallery = lazy(() => import('./components/WaveformGallery'));
 const WorkflowSection = lazy(() => import('./components/WorkflowSection'));
 
@@ -88,7 +89,7 @@ function App() {
   const [activeView, setActiveView] = useState<WorkspaceView>(getInitialWorkspaceView);
   const [dataset, setDataset] = useState<UploadResponse | null>(null);
   const [trainingSource, setTrainingSource] = useState<'upload' | 'split'>('split');
-  const [existingSplitDir, setExistingSplitDir] = useState('data/split_noise_10000/splits');
+  const [existingSplitDir, setExistingSplitDir] = useState('data/splits/604427c3-de1f-4f39-955a-1e539e685b0e');
   const [uploading, setUploading] = useState(false);
   const [targetCol, setTargetCol] = useState('wait_time_ms');
   const [idCol, setIdCol] = useState('wave_id');
@@ -1557,6 +1558,12 @@ Content-Type: application/json
             />
 
             <FeatureImportanceSection featureSummary={featureSummary} trainJob={trainJob} />
+
+            <ModelLeaderboard
+              modelName={selectedModel}
+              adminToken={isAdminUnlocked ? adminToken : undefined}
+              activeModel="LightGBM_BAG_L1"
+            />
           </Suspense>
           </>
           )}

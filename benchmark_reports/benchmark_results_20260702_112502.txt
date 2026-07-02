@@ -1,0 +1,27 @@
+==============================================================================================================
+NEUROSETTLE API LATENCY BENCHMARK TOOL
+==============================================================================================================
+Targeting Backend API: http://127.0.0.1:5000/api
+Targeting Model Name: NS_1_5 // LightGBM_BAG_L1
+--------------------------------------------------------------------------------------------------------------
+CSV file not found at data\data_for_pred.csv. Falling back to mock data.
+Generating 731 mock waveforms to reach required pool size of 731...
+--------------------------------------------------------------------------------------------------------------
+Performing warm-up request to load the model in memory...
+Warm-up complete!
+Benchmarking /predict-sync (Single waveform, 30 runs)...
+Benchmarking /predict-batch-sync (Batch size 10, 20 runs)...
+Benchmarking /predict-batch-sync (Batch size 50, 10 runs)...
+Benchmarking /health (Service heartbeat, 30 runs)...
+
+==============================================================================================================
+BENCHMARK RESULTS SUMMARY
+==============================================================================================================
+Single Waveform (/predict-sync)     | Runs: 30 | Mean:  35.60ms | Median:  34.89ms | P95:  41.76ms | Min:  31.50ms | Max:  45.24ms | Std:  2.89ms
+Batch of 10 (/predict-batch-sync)   | Runs: 20 | Mean:  98.72ms | Median:  97.14ms | P95: 105.40ms | Min:  93.15ms | Max: 119.21ms | Std:  6.04ms
+Batch of 50 (/predict-batch-sync)   | Runs: 10 | Mean: 383.32ms | Median: 377.44ms | P95: 474.75ms | Min: 348.47ms | Max: 474.75ms | Std: 36.10ms
+Heartbeat check (/health)           | Runs: 30 | Mean:   2.52ms | Median:   2.59ms | P95:   2.83ms | Min:   2.20ms | Max:   2.99ms | Std:  0.20ms
+Single Waveform (per waveform cost) | Avg:   35.60ms per wave
+Batch of 10 (per waveform cost)     | Avg:    9.87ms per wave
+Batch of 50 (per waveform cost)     | Avg:    7.67ms per wave
+==============================================================================================================

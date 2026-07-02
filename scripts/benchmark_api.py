@@ -26,7 +26,7 @@ def print(*args, **kwargs):
 
 # API Server Configuration
 API_URL = "http://127.0.0.1:5000/api"
-MODEL_NAME = "Aug_best_old_data_v1"  # Use existing local model name
+MODEL_NAME = "NS_1_5"  # Use existing local model name
 
 # Generate a mock waveform with 1000 points (normalized values between -1.0 and 1.0)
 def generate_mock_waveform(length=1000):

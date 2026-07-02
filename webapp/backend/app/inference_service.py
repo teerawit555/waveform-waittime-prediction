@@ -179,7 +179,7 @@ class InferenceService:
         X = df_clean[feature_cols]
 
         # 6. Predict
-        pred_fit = predictor.predict(X)
+        pred_fit = predictor.predict(X, model="LightGBM_BAG_L1")
         pred_fit = float(pred_fit.iloc[0])
         pred_ms = np.expm1(pred_fit) if bool(meta.get("log_target", False)) else pred_fit
         pred_ms = float(np.clip(pred_ms, 0.0, None))
@@ -274,7 +274,7 @@ class InferenceService:
         X = df_clean[feature_cols]
 
         # 5. Predict
-        pred_fit = predictor.predict(X).to_numpy()
+        pred_fit = predictor.predict(X, model="LightGBM_BAG_L1").to_numpy()
         pred_ms = np.expm1(pred_fit) if bool(meta.get("log_target", False)) else pred_fit
         pred_ms = np.clip(pred_ms, 0.0, None)
 

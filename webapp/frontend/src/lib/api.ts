@@ -221,6 +221,26 @@ export async function getModelAudit(modelName: string, adminToken?: string, topk
   return data;
 }
 
+export type LeaderboardEntry = {
+  model: string;
+  score_val: number;
+  eval_metric: string;
+  pred_time_val: number;
+  fit_time: number;
+  stack_level: number;
+  can_infer: boolean;
+  fit_order: number;
+};
+
+export async function getModelLeaderboard(modelName: string, adminToken?: string): Promise<LeaderboardEntry[]> {
+  const res = await fetch(`${API_BASE}/models/${encodeURIComponent(modelName)}/leaderboard`, {
+    headers: adminHeaders(adminToken),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? 'Failed to fetch leaderboard');
+  return data.leaderboard;
+}
+
 export function toFileUrl(relativePath?: string | null) {
   if (!relativePath) return '';
   if (relativePath.startsWith('http')) return relativePath;

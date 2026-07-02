@@ -1,0 +1,27 @@
+==============================================================================================================
+NEUROSETTLE API LATENCY BENCHMARK TOOL
+==============================================================================================================
+Targeting Backend API: http://127.0.0.1:5000/api
+Targeting Model Name: wave_model_v1
+--------------------------------------------------------------------------------------------------------------
+CSV file not found at data\data_for_pred.csv. Falling back to mock data.
+Generating 731 mock waveforms to reach required pool size of 731...
+--------------------------------------------------------------------------------------------------------------
+Performing warm-up request to load the model in memory...
+Warm-up complete!
+Benchmarking /predict-sync (Single waveform, 30 runs)...
+Benchmarking /predict-batch-sync (Batch size 10, 20 runs)...
+Benchmarking /predict-batch-sync (Batch size 50, 10 runs)...
+Benchmarking /health (Service heartbeat, 30 runs)...
+
+==============================================================================================================
+BENCHMARK RESULTS SUMMARY
+==============================================================================================================
+Single Waveform (/predict-sync)     | Runs: 30 | Mean: 213.41ms | Median: 210.02ms | P95: 241.24ms | Min: 183.97ms | Max: 364.80ms | Std: 31.92ms
+Batch of 10 (/predict-batch-sync)   | Runs: 20 | Mean: 393.13ms | Median: 298.09ms | P95: 726.90ms | Min: 237.29ms | Max: 759.92ms | Std: 171.75ms
+Batch of 50 (/predict-batch-sync)   | Runs: 10 | Mean: 879.51ms | Median: 740.36ms | P95: 1845.54ms | Min: 548.65ms | Max: 1845.54ms | Std: 410.65ms
+Heartbeat check (/health)           | Runs: 30 | Mean:   2.62ms | Median:   2.60ms | P95:   3.01ms | Min:   2.21ms | Max:   3.20ms | Std:  0.20ms
+Single Waveform (per waveform cost) | Avg:  213.41ms per wave
+Batch of 10 (per waveform cost)     | Avg:   39.31ms per wave
+Batch of 50 (per waveform cost)     | Avg:   17.59ms per wave
+==============================================================================================================

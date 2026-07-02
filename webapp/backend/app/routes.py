@@ -155,7 +155,15 @@ def _resolve_existing_split_dir(split_dir: str | None) -> Path | None:
     except ValueError as exc:
         raise ValueError("split_dir must be inside the project data directory") from exc
 
-    missing = [name for name in ("train.csv", "valid.csv", "test.csv") if not (path / name).exists()]
+    expected_sets = [
+        ("train.csv", "train_hybrid.csv", "train_features.csv"),
+        ("valid.csv", "valid_hybrid.csv", "valid_features.csv"),
+        ("test.csv", "test_hybrid.csv", "test_features.csv"),
+    ]
+    missing = []
+    for candidates in expected_sets:
+        if not any((path / c).exists() for c in candidates):
+            missing.append(candidates[0])
     if missing:
         raise ValueError(f"split_dir is missing required files: {', '.join(missing)}")
     return path
@@ -517,6 +525,32 @@ def get_model(model_name: str):
             print(f"[WARN] Failed to write updated model meta: {e}")
 
     return jsonify(meta)
+
+
+@api.route("/models/<model_name>/leaderboard", methods=["GET"])
+def get_model_leaderboard(model_name: str):
+    auth_error = require_admin()
+    if auth_error is not None:
+        return auth_error
+
+    meta_file = AUTOGLUON_DIR / model_name / "model_meta.json"
+    if not meta_file.exists():
+        return jsonify({"error": "Model not found"}), 404
+
+    meta = json.loads(meta_file.read_text())
+    ag_path = meta.get("ag_path")
+    if not ag_path or not Path(ag_path).exists():
+        return jsonify({"error": "AutoGluon model path not found"}), 404
+
+    try:
+        from autogluon.tabular import TabularPredictor
+        predictor = TabularPredictor.load(ag_path)
+        lb = predictor.leaderboard()
+        records = lb.to_dict(orient="records")
+        return jsonify({"leaderboard": records})
+    except Exception as e:
+        return jsonify({"error": f"Failed to load leaderboard: {e}"}), 500
+
 
 def _safe_model_name(model_name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in model_name.strip()).strip("_")

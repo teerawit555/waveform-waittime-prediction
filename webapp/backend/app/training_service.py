@@ -650,11 +650,14 @@ class TrainingService:
                 split_dir.mkdir(parents=True, exist_ok=True)
             processed_dir.mkdir(parents=True, exist_ok=True)
 
-            split_csv = {
-                "train": split_dir / "train.csv",
-                "valid": split_dir / "valid.csv",
-                "test":  split_dir / "test.csv",
-            }
+            split_csv = {}
+            for name in ("train", "valid", "test"):
+                candidates = [
+                    split_dir / f"{name}.csv",
+                    split_dir / f"{name}_hybrid.csv",
+                    split_dir / f"{name}_features.csv",
+                ]
+                split_csv[name] = next((c for c in candidates if c.exists()), candidates[0])
             feature_csv = {name: processed_dir / f"{name}_features.csv" for name in split_csv}
             tensor_npz  = {name: processed_dir / f"{name}_wave_tensor.npz" for name in split_csv}
             embed_csv   = {name: processed_dir / f"{name}_tcn_embed.csv" for name in split_csv}

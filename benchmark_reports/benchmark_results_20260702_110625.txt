@@ -1,0 +1,27 @@
+==============================================================================================================
+NEUROSETTLE API LATENCY BENCHMARK TOOL
+==============================================================================================================
+Targeting Backend API: http://127.0.0.1:5000/api
+Targeting Model Name: wave_model_v1
+--------------------------------------------------------------------------------------------------------------
+CSV file not found at data\data_for_pred.csv. Falling back to mock data.
+Generating 731 mock waveforms to reach required pool size of 731...
+--------------------------------------------------------------------------------------------------------------
+Performing warm-up request to load the model in memory...
+Warm-up complete!
+Benchmarking /predict-sync (Single waveform, 30 runs)...
+Benchmarking /predict-batch-sync (Batch size 10, 20 runs)...
+Benchmarking /predict-batch-sync (Batch size 50, 10 runs)...
+Benchmarking /health (Service heartbeat, 30 runs)...
+
+==============================================================================================================
+BENCHMARK RESULTS SUMMARY
+==============================================================================================================
+Single Waveform (/predict-sync)     | Runs: 30 | Mean: 390.43ms | Median: 211.64ms | P95: 1764.10ms | Min: 185.05ms | Max: 3464.20ms | Std: 646.59ms
+Batch of 10 (/predict-batch-sync)   | Runs: 20 | Mean: 2226.15ms | Median: 2013.99ms | P95: 5451.00ms | Min: 351.11ms | Max: 6723.02ms | Std: 1534.62ms
+Batch of 50 (/predict-batch-sync)   | Runs: 10 | Mean: 1775.20ms | Median: 786.02ms | P95: 8088.91ms | Min: 679.77ms | Max: 8088.91ms | Std: 2303.41ms
+Heartbeat check (/health)           | Runs: 30 | Mean:   2.65ms | Median:   2.55ms | P95:   3.11ms | Min:   2.21ms | Max:   3.97ms | Std:  0.35ms
+Single Waveform (per waveform cost) | Avg:  390.43ms per wave
+Batch of 10 (per waveform cost)     | Avg:  222.61ms per wave
+Batch of 50 (per waveform cost)     | Avg:   35.50ms per wave
+==============================================================================================================
