@@ -469,13 +469,22 @@ def get_model_registry_summary(
             summary["description"] = getattr(registered_model, "description", None)
             summary["latest_versions_count"] = len(getattr(registered_model, "latest_versions", []) or [])
         except Exception as exc:
-            summary["reason"] = f"registered model not found: {exc}"
-            return summary
+            return get_local_model_registry_summary(
+                registered_model_name,
+                reason=f"registered model not found: {exc}",
+                max_results=max_results,
+            )
 
         versions = client.search_model_versions(f"name='{registered_model_name}'")
         rows = [_model_version_to_dict(client, version) for version in versions]
         rows.sort(key=lambda item: int(item["version"]) if str(item["version"]).isdigit() else 0, reverse=True)
         rows = rows[:max_results]
+        if not rows:
+            return get_local_model_registry_summary(
+                registered_model_name,
+                reason="MLflow has no registered versions; showing local model artifacts.",
+                max_results=max_results,
+            )
 
         best_by_mae = min(
             (row for row in rows if row["metrics"].get("mae_all") is not None),
