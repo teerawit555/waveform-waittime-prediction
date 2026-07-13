@@ -215,7 +215,12 @@ def list_available_models():
         meta_file = ag_dir / "model_meta.json"
         if meta_file.exists():
             meta    = json.loads(meta_file.read_text())
-            tcn_dir = Path(meta["tcn_path"])
+            recorded_tcn_path = meta.get("tcn_path")
+            tcn_dir = Path(recorded_tcn_path) if recorded_tcn_path else TCN_DIR / ag_dir.name
+            # Imported packages may retain an absolute training-machine path.
+            # Fall back to the matching local TCN directory when it is stale.
+            if not tcn_dir.exists():
+                tcn_dir = TCN_DIR / ag_dir.name
         else:
             tcn_dir = TCN_DIR / ag_dir.name  # fallback กรณีไม่มี metadata
         items.append({
