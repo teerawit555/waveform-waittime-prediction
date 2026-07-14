@@ -227,6 +227,11 @@ def list_available_models():
             "name":     ag_dir.name,
             "tcn_path": str(tcn_dir),
             "ag_path":  str(ag_dir),
+            "trained_at": (
+                (ag_dir / "predictor.pkl").stat().st_mtime
+                if (ag_dir / "predictor.pkl").is_file()
+                else ag_dir.stat().st_mtime
+            ),
             "ready":    tcn_dir.exists(),  # ready = TCN model ยังอยู่ครบ
         })
     return items
