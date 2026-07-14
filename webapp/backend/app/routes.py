@@ -547,7 +547,10 @@ def get_model_leaderboard(model_name: str):
         predictor = TabularPredictor.load(ag_path)
         lb = predictor.leaderboard()
         records = lb.to_dict(orient="records")
-        return jsonify({"leaderboard": records})
+        return jsonify({
+            "leaderboard": records,
+            "best_model": predictor.model_best,
+        })
     except Exception as e:
         return jsonify({"error": f"Failed to load leaderboard: {e}"}), 500
 
