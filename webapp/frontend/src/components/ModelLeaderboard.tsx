@@ -4,11 +4,11 @@ import { getModelLeaderboard, LeaderboardEntry } from '../lib/api';
 type Props = {
   modelName: string;
   adminToken?: string;
-  activeModel?: string;
 };
 
-export default function ModelLeaderboard({ modelName, adminToken, activeModel }: Props) {
+export default function ModelLeaderboard({ modelName, adminToken }: Props) {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+  const [activeModel, setActiveModel] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -17,7 +17,10 @@ export default function ModelLeaderboard({ modelName, adminToken, activeModel }:
     setLoading(true);
     setError('');
     getModelLeaderboard(modelName, adminToken)
-      .then(setEntries)
+      .then(({ leaderboard, best_model }) => {
+        setEntries(leaderboard);
+        setActiveModel(best_model ?? leaderboard[0]?.model ?? null);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [modelName, adminToken]);
@@ -36,8 +39,8 @@ export default function ModelLeaderboard({ modelName, adminToken, activeModel }:
               <th>#</th>
               <th>Model</th>
               <th>MAE (score)</th>
-              <th>Predict Time (s)</th>
-              <th>Fit Time (s)</th>
+              <th>Val Runtime (s)</th>
+              <th>Train Runtime (s)</th>
               <th>Stack Level</th>
             </tr>
           </thead>
