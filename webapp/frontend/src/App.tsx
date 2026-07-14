@@ -130,7 +130,9 @@ function App() {
   const [modelName, setModelName] = useState('wave_model_v1');
   const [models, setModels] = useState<ModelItem[]>([]);
   const [selectedModel, setSelectedModel] = useState(''); // predict
-  const [selectedTrainModel, setSelectedTrainModel] = useState(''); // train
+  const [selectedTrainModel, setSelectedTrainModel] = useState(
+    () => localStorage.getItem('selectedTrainModel') || '',
+  ); // train
   const [modelsLoading, setModelsLoading] = useState(false);
   const [isTrainingEnabled, setIsTrainingEnabled] = useState(true);
   // Select model version 
@@ -179,6 +181,13 @@ function App() {
       setSelectedModel((current) => {
         if (current && readyModels.some((model) => model.name === current)) return current;
         return readyModels.find((model) => model.name === DEFAULT_MODEL_NAME)?.name ?? readyModels[0]?.name ?? '';
+      });
+
+      setSelectedTrainModel((current) => {
+        if (current && readyModels.some((model) => model.name === current)) return current;
+        if (!isAdminUnlocked) return '';
+        return [...readyModels]
+          .sort((a, b) => Number(b.trained_at ?? 0) - Number(a.trained_at ?? 0))[0]?.name ?? '';
       });
 
       // Auto-redirect if on training page but training is disabled
@@ -299,6 +308,7 @@ function App() {
         message: `Loaded model: ${modelName}`,
         result: { ...result, history, mlflow: data.mlflow },
       });
+      setSelectedModel(modelName);
     } catch (err: any) {
       setError(err.message);
     }
@@ -308,6 +318,25 @@ useEffect(() => {
   fetchModels();
   fetchMlflowConfig();
 }, [isAdminUnlocked, adminToken]);
+
+useEffect(() => {
+  if (selectedTrainModel) localStorage.setItem('selectedTrainModel', selectedTrainModel);
+  else localStorage.removeItem('selectedTrainModel');
+}, [selectedTrainModel]);
+
+useEffect(() => {
+  if (!isAdminUnlocked) return;
+  if (!selectedTrainModel) {
+    setTrainJob(null);
+    return;
+  }
+  if (trainJobId) return;
+  if (
+    trainJob?.status === 'completed'
+    && trainJob?.result?.ag_model === selectedTrainModel
+  ) return;
+  loadTrainResult(selectedTrainModel);
+}, [isAdminUnlocked, adminToken, selectedTrainModel]);
 
 useEffect(() => {
   if (!isAdminUnlocked) {
@@ -559,6 +588,7 @@ useEffect(() => {
 
       if (trainJob?.result?.ag_model) {
         setSelectedModel(trainJob.result.ag_model);
+        setSelectedTrainModel(trainJob.result.ag_model);
       }
     }
   }, [trainJob]);
@@ -568,6 +598,10 @@ useEffect(() => {
     if (!file) return;
     try {
       setError(null);
+      setPredictJob(null);
+      setPredictJobId(null);
+      setGallerySearch('');
+      setSearchedItem(null);
       setPredictFile(file);
       const res = await uploadFile(file);
       setPredictUpload(res);
@@ -603,14 +637,10 @@ useEffect(() => {
   // Derived data used by the dashboard sections.
   const trainMetrics   = trainJob?.result?.metrics ?? {};
   const predictPreview = predictJob?.result?.preview_predictions ?? [];
-  const analysisItems  = predictJob?.result?.analysis_manifest
-                      ?? trainJob?.result?.analysis_manifest
-                      ?? [];
+  const analysisItems  = predictJob?.result?.analysis_manifest ?? [];
 
   // Prefer the backend total, then fall back to the loaded preview count.
-  const totalWaves: number = predictJob?.result?.total_waves
-                          ?? trainJob?.result?.total_waves
-                          ?? analysisItems.length;
+  const totalWaves: number = predictJob?.result?.total_waves ?? analysisItems.length;
 
   const activeJobId: string | null = useMemo(() => {
     if (predictJobId) return predictJobId;
@@ -1299,10 +1329,7 @@ Content-Type: application/json
                 <span>Load Existing Model</span>
                 <select
                   value={selectedTrainModel}
-                  onChange={(e) => {
-                    setSelectedTrainModel(e.target.value);
-                    loadTrainResult(e.target.value);
-                  }}
+                  onChange={(e) => setSelectedTrainModel(e.target.value)}
                   disabled={modelsLoading || models.length === 0}
                 >
                   <option value="">-- Train new model --</option>
@@ -1560,9 +1587,8 @@ Content-Type: application/json
             <FeatureImportanceSection featureSummary={featureSummary} trainJob={trainJob} />
 
             <ModelLeaderboard
-              modelName={selectedModel}
+              modelName={selectedTrainModel || selectedModel}
               adminToken={isAdminUnlocked ? adminToken : undefined}
-              activeModel="LightGBM_BAG_L1"
             />
           </Suspense>
           </>
