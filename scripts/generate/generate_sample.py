@@ -15,6 +15,9 @@ import numpy as np
 import pandas as pd
 
 
+HIGH_NOISE_RATIO = 0.8
+
+
 # =============================================================================
 # 1) Utility Functions
 # =============================================================================
@@ -205,13 +208,108 @@ def sample_target_mixed_units(rng: np.random.Generator) -> float:
     """
     p = rng.random()
     if p < 0.15:
-        return float(10 ** rng.uniform(-9, -8))
+        value = float(10 ** rng.uniform(-9, -8))
     elif p < 0.35:
-        return float(10 ** rng.uniform(-6, -5))
+        value = float(10 ** rng.uniform(-6, -5))
     elif p < 0.85:
-        return float(10 ** rng.uniform(-3, 0))
+        value = float(10 ** rng.uniform(-3, 0))
     else:
-        return float(rng.uniform(1.0, 50.0))
+        value = float(rng.uniform(1.0, 50.0))
+
+    # SignalSample.xlsx contains both polarities in roughly equal proportion.
+    return value if rng.random() < 0.5 else -value
+
+
+def add_signal_sample_noise(
+    signal_array: np.ndarray,
+    target_value: float,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, float]:
+    """Apply either visible or reference-level noise to any waveform.
+
+    Robust first-difference estimates from the 11 reference signals give a
+    relative high-frequency noise range of 0.12%-0.33%, with a 0.19% median.
+    Most generated waves additionally use noise scaled to their waveform span,
+    making noise equally visible on large and small signal ranges. A smaller
+    share retains the original reference-level profile.
+    """
+    clean_signal = np.asarray(signal_array, dtype=float)
+    mag = max(abs(float(target_value)), 1e-12)
+    rel_sd = float(rng.triangular(0.0012, 0.0019, 0.0033))
+    reference_sd = max(mag * rel_sd, 1e-15)
+
+    use_high_noise = bool(rng.random() < HIGH_NOISE_RATIO)
+    if use_high_noise:
+        q_low, q_high = np.quantile(clean_signal, [0.01, 0.99])
+        waveform_span = max(float(q_high - q_low), 0.0)
+        span_noise_ratio = float(rng.triangular(0.006, 0.010, 0.016))
+        white_sd = max(reference_sd, waveform_span * span_noise_ratio)
+    else:
+        white_sd = reference_sd
+
+    n = len(clean_signal)
+
+    white = rng.normal(0.0, white_sd, size=n)
+
+    # The reference signals are mostly white noise with a small correlated
+    # component. Normalize the smoothed components before scaling so the
+    # requested relative noise remains stable for every waveform type.
+    corr_raw = rng.normal(0.0, 1.0, size=n)
+    corr_win = min(int(rng.integers(5, 13)), max(n - 1, 1))
+    corr = np.convolve(corr_raw, np.ones(corr_win) / corr_win, mode="same")
+    corr_std = float(np.std(corr))
+    if corr_std > 0:
+        corr = corr / corr_std * (white_sd * 0.18)
+
+    drift_raw = rng.normal(0.0, 1.0, size=n)
+    drift_win = min(int(rng.integers(45, 90)), max(n - 1, 1))
+    drift = np.convolve(drift_raw, np.ones(drift_win) / drift_win, mode="same")
+    drift_std = float(np.std(drift))
+    if drift_std > 0:
+        drift = drift / drift_std * (white_sd * 0.08)
+
+    return clean_signal + white + corr + drift, white_sd
+
+
+def estimate_slow_tail_label_ms(
+    time_ms: np.ndarray,
+    signal_array: np.ndarray,
+    noise_sd: float,
+) -> float:
+    """Estimate when a slow monotonic tail is visually stable.
+
+    Slow-tail waveforms intentionally keep their long exponential tail instead
+    of being flattened at a preselected time. Their label therefore needs to be
+    derived from the generated waveform: after light median smoothing, the
+    remaining tail must stay within one generated-noise standard deviation of
+    the final level.
+    """
+    t = np.asarray(time_ms, dtype=float)
+    y = np.asarray(signal_array, dtype=float)
+    if len(t) < 2 or len(y) != len(t):
+        return float(t[-1]) if len(t) else 0.0
+
+    dt_ms = max(float(np.median(np.diff(t))), 1e-12)
+    smooth_samples = max(5, int(round(0.25 / dt_ms)))
+    if smooth_samples % 2 == 0:
+        smooth_samples += 1
+
+    smooth = (
+        pd.Series(y)
+        .rolling(smooth_samples, center=True, min_periods=1)
+        .median()
+        .to_numpy(dtype=float)
+    )
+    tail_samples = max(smooth_samples, int(round(0.05 * len(smooth))))
+    final_level = float(np.median(smooth[-tail_samples:]))
+    numeric_floor = np.finfo(float).eps * max(float(np.max(np.abs(y))), 1.0)
+    tolerance = max(float(noise_sd), numeric_floor)
+
+    within_final_noise = np.abs(smooth - final_level) <= tolerance
+    stable_through_end = np.logical_and.accumulate(within_final_noise[::-1])[::-1]
+    stable_indices = np.flatnonzero(stable_through_end)
+    stable_index = int(stable_indices[0]) if len(stable_indices) else len(t) - 1
+    return float(t[stable_index])
 
 
 def apply_high_noise_boost(
@@ -272,15 +370,15 @@ def generate_step_response(
     w1 = 2.0 * np.pi * freq_hz
     band_half = (limit_high - limit_low) / 2.0
 
-    overshoot_scale = float(rng.uniform(1.5, 8.0 if target_value < 1.0 else 15.0))
+    overshoot_scale = float(rng.uniform(0.25, 2.25))
     direction = float(rng.choice([1.0, -1.0]))
     amp0 = band_half * overshoot_scale * direction
 
-    tau = max(settling_time_s / float(rng.uniform(2.5, 6.0)), 1e-6)
-    tc_rise = max(settling_time_s / float(rng.uniform(3.0, 10.0)), 1e-6)
+    tau = max(settling_time_s / float(rng.uniform(3.5, 6.5)), 1e-6)
+    tc_rise = max(settling_time_s / float(rng.uniform(3.0, 4.5)), 1e-6)
     t_eff, _ = add_time_delay(time_vector, rng, max_delay_s=0.00004)
 
-    if rng.random() < 0.5:
+    if rng.random() < 0.75:
         base = target_value * (1.0 - np.exp(-t_eff / tc_rise))
     else:
         tau2 = max(tc_rise * float(rng.uniform(1.5, 4.0)), 1e-6)
@@ -308,19 +406,11 @@ def generate_step_response(
 
     y = apply_cosine_taper_settling(
         y, time_vector, settling_time_s, target_value,
-        strength=float(rng.uniform(0.65, 0.70))
+        strength=float(rng.uniform(0.88, 0.98))
     )
     y = flatten_after_settle(y, time_vector, settling_time_s)
 
-    y, sd = add_post_settle_noise(
-        y, time_vector, settling_time_s, target_value, rng,
-        probability=0.95,
-        smoothness_range=(10, 28),
-        post_sd_scale=(0.0009, 0.0016),
-        add_wobble_prob=0.35,
-        wobble_scale=(0.00012, 0.00030),
-    )
-    return y, sd, "type0_Step_Response"
+    return y, 0.0, "type0_Step_Response"
 
 
 def generate_high_start_oscillation(
@@ -361,16 +451,7 @@ def generate_high_start_oscillation(
         strength=float(rng.uniform(0.92, 0.99))
     )
 
-    y, sd = add_post_settle_noise(
-        y, t, settling_time_s, target_value, rng,
-        probability=0.70,
-        post_sd_scale=(0.00035, 0.00075),
-        smoothness_range=(20, 38),
-        add_wobble_prob=0.04,
-        wobble_scale=(0.00005, 0.00012),
-        wobble_win_range=(55, 110),
-    )
-    return y, sd, "type1_Damped_Osc"
+    return y, 0.0, "type1_Damped_Osc"
 
 
 def generate_continuous_triangular_pulses(
@@ -382,10 +463,10 @@ def generate_continuous_triangular_pulses(
     avg_height = band * float(rng.uniform(0.5, 1.5))
     t_end = float(time_vector[-1])
 
-    avg_period = float(rng.uniform(t_end / 20.0, t_end / 6.0))
+    avg_period = float(rng.uniform(t_end / 14.0, t_end / 8.0))
     pulse_width = avg_period * float(rng.uniform(0.15, 0.30))
-    is_height_const = bool(rng.choice([True, False]))
-    is_period_const = bool(rng.choice([True, False]))
+    is_height_const = bool(rng.random() < 0.70)
+    is_period_const = bool(rng.random() < 0.70)
 
     start_after_s = 0.0005
     current_time = (
@@ -394,7 +475,7 @@ def generate_continuous_triangular_pulses(
     )
 
     while current_time < t_end:
-        height = avg_height if is_height_const else avg_height * float(rng.uniform(0.5, 1.5))
+        height = avg_height if is_height_const else avg_height * float(rng.uniform(0.85, 1.15))
         t_start = current_time
         t_peak = current_time + pulse_width / 2.0
         t_end_pulse = current_time + pulse_width
@@ -407,33 +488,28 @@ def generate_continuous_triangular_pulses(
         if np.any(fall):
             y[fall] += height - (height / (pulse_width / 2.0)) * (time_vector[fall] - t_peak)
 
-        period = avg_period if is_period_const else avg_period * float(rng.uniform(0.7, 1.3))
+        period = avg_period if is_period_const else avg_period * float(rng.uniform(0.90, 1.10))
         current_time += period
-
-    mag = max(abs(float(target_value)), 1e-12)
-    floor_abs = max(mag * 1e-4, 1e-15)
-    sd = max(mag * float(rng.uniform(0.00005, 0.0002)), floor_abs)
-    y += rng.normal(0.0, sd, size=len(time_vector))
 
     early = time_vector < (0.2 * time_vector[-1])
     y[early] = np.maximum(y[early], target_value)
     pre = time_vector < max(float(settling_time_s), start_after_s)
-    y[pre] = target_value + rng.normal(0.0, sd, size=int(np.sum(pre)))
+    y[pre] = target_value
 
-    return y, sd, "type2_Triangle_Wave"
+    return y, 0.0, "type2_Triangle_Wave"
 
 
 def generate_overdamped_decay(
     time_vector, target_value, settling_time_s, limit_low, limit_high, rng
 ):
     """Type 4a: Overdamped exponential decay (no ringing)."""
-    start_amp = (limit_high - limit_low) * float(rng.uniform(1.5, 3.0))
+    direction = 1.0 if target_value >= 0 else -1.0
+    start_amp = direction * (limit_high - limit_low) * float(rng.uniform(1.5, 3.0))
     tau = settling_time_s / float(rng.uniform(3.0, 5.0))
 
     y = target_value + start_amp * np.exp(-time_vector / max(tau, 1e-12))
     y = apply_cosine_taper_settling(y, time_vector, settling_time_s, target_value, strength=1.0)
-    y, sd = add_post_settle_noise(y, time_vector, settling_time_s, target_value, rng)
-    return y, sd, "type4_overdamped_no_overshoot"
+    return y, 0.0, "type4_overdamped_no_overshoot"
 
 
 def generate_overdamped_decay1(
@@ -450,14 +526,77 @@ def generate_overdamped_decay1(
     if rng.random() < 0.35:
         t_eff, _ = add_time_delay(time_vector, rng, max_delay_s=0.00004)
 
-    y = target_value + A_pos * np.exp(-t_eff / tau_fast) - A_neg * np.exp(-t_eff / tau_slow)
+    direction = 1.0 if target_value >= 0 else -1.0
+    y = target_value + direction * (
+        A_pos * np.exp(-t_eff / tau_fast) - A_neg * np.exp(-t_eff / tau_slow)
+    )
     y = apply_cosine_taper_settling(
         y, time_vector, settling_time_s, target_value,
         strength=float(rng.uniform(0.55, 0.8))
     )
     y = flatten_after_settle(y, time_vector, settling_time_s)
-    y, sd = add_post_settle_noise(y, time_vector, settling_time_s, target_value, rng)
-    return y, sd, "type4_overdamped_decay_overshoot"
+    return y, 0.0, "type4_overdamped_decay_overshoot"
+
+
+def generate_slow_tail_biexponential(
+    time_vector, target_value, settling_time_s, limit_low, limit_high, rng
+):
+    """Type 4c: fast knee followed by a long monotonic tail.
+
+    This shape mirrors Signal1/3/4/6/7 in SignalSample.xlsx, which are not
+    fully described by a single exponential within the 10 ms window.
+    """
+    direction = 1.0 if target_value >= 0 else -1.0
+    band = float(limit_high - limit_low)
+    amplitude = band * float(rng.uniform(1.8, 3.2))
+    fast_mix = float(rng.uniform(0.45, 0.72))
+    tau_fast = max(settling_time_s / float(rng.uniform(4.5, 8.0)), 1e-6)
+    tau_slow = max(settling_time_s / float(rng.uniform(0.75, 1.35)), 1e-6)
+    transient = amplitude * (
+        fast_mix * np.exp(-time_vector / tau_fast)
+        + (1.0 - fast_mix) * np.exp(-time_vector / tau_slow)
+    )
+    y = target_value + direction * transient
+    return y, 0.0, "type4_slow_tail_biexponential"
+
+
+def generate_noisy_flat_settling(
+    time_vector, target_value, settling_time_s, limit_low, limit_high, rng
+):
+    """Type 3: noisy near-flat waveform with a short startup transient."""
+    t = time_vector.astype(float)
+    mag = max(abs(float(target_value)), 1e-12)
+    band = max(float(limit_high - limit_low), mag * 0.02)
+
+    tau = max(settling_time_s / float(rng.uniform(3.0, 5.0)), 1e-6)
+    offset = band * float(rng.uniform(-1.2, 1.2))
+    transient = offset * np.exp(-t / tau)
+
+    if rng.random() < 0.55:
+        cycles = float(rng.uniform(0.75, 2.0))
+        transient += (
+            band
+            * float(rng.uniform(0.2, 0.7))
+            * np.exp(-t / max(tau * 0.75, 1e-6))
+            * np.sin(2.0 * np.pi * cycles * t / max(settling_time_s, 1e-6))
+        )
+
+    y = target_value + transient
+    return y, 0.0, "type3_Noisy_Flat_Settling"
+
+
+def generate_stationary_noisy_flat(
+    time_vector, target_value, settling_time_s, limit_low, limit_high, rng
+):
+    """Type 3b: stationary flat signal that is stable from the first sample.
+
+    This mirrors reference signals such as Signal10: the clean waveform stays
+    at its final value for the full capture, while the shared noise policy adds
+    the visible white-noise floor, small correlation, and slow drift.
+    """
+    del settling_time_s, limit_low, limit_high, rng
+    y = np.full_like(time_vector, target_value, dtype=float)
+    return y, 0.0, "type3_Stationary_Noisy_Flat"
 
 
 def generate_pulse_train(
@@ -504,13 +643,9 @@ def generate_pulse_train(
         mask = (time_vector >= t_mid) & (time_vector < t_mid + 0.05 * t_end)
         y[mask] += base_amp
 
-    y, sd = add_post_settle_noise(
-        y, time_vector, settling_time_s=0.0, target_value=target_value,
-        rng=rng, probability=0.0, add_wobble_prob=0.0,
-    )
     pre = time_vector < max(float(settling_time_s), start_after_s)
     y[pre] = target_value
-    return y, sd, "type5_Square_Pulse_Wave"
+    return y, 0.0, "type5_Square_Pulse_Wave"
 
 
 def generate_pulse_train_HARD(
@@ -532,10 +667,7 @@ def generate_pulse_train_HARD(
         y[mask] += amp
         cur += p
 
-    y, sd = add_post_settle_noise(
-        y, time_vector, 0.0, target_value, rng, probability=0.0, add_wobble_prob=0.0
-    )
-    return y, sd, "type5_Square_Pulse_HARD"
+    return y, 0.0, "type5_Square_Pulse_HARD"
 
 
 # =============================================================================
@@ -579,18 +711,22 @@ def main():
     n_samples = len(t_ms)
 
     ratios = [
-        (generate_step_response,                0.22),
-        (generate_high_start_oscillation,       0.20),
-        (generate_overdamped_decay,             0.20),
-        (generate_overdamped_decay1,            0.12),
-        (generate_pulse_train,                  0.12),
-        (generate_continuous_triangular_pulses, 0.07),
-        (generate_pulse_train_HARD,             0.07),
+        (generate_step_response,                0.14),
+        (generate_high_start_oscillation,       0.10),
+        (generate_overdamped_decay,             0.16),
+        (generate_overdamped_decay1,            0.10),
+        (generate_slow_tail_biexponential,      0.14),
+        (generate_noisy_flat_settling,          0.06),
+        (generate_stationary_noisy_flat,        0.08),
+        (generate_pulse_train,                  0.08),
+        (generate_continuous_triangular_pulses, 0.08),
+        (generate_pulse_train_HARD,             0.06),
     ]
 
     # type ที่ไม่ควรมี settling → บังคับ settle = 0.1ms
     no_settle_funcs = {
         generate_continuous_triangular_pulses,
+        generate_stationary_noisy_flat,
         generate_pulse_train,
         generate_pulse_train_HARD,
     }
@@ -615,7 +751,7 @@ def main():
 
         # --- Sample settling time ---
         t_end_ms = float(args.t_end_ms)
-        max_settle_ms = 0.75 * t_end_ms
+        max_settle_ms = 0.92 * t_end_ms
         p = master_rng.random()
         if p < 0.78:
             settle_time_ms = float(master_rng.uniform(1.5, max(0.55 * max_settle_ms, 1.7)))
@@ -633,12 +769,19 @@ def main():
         wave_rng = np.random.default_rng(master_rng.integers(0, 2**32 - 1))
         y, used_sd, type_name = gen_func(t_s, final_value, settle_s, low, high, wave_rng)
 
-        # --- High-noise boost สำหรับ flat signal (เหมือน wave 9/10 ใน real data) ---
-        y, boost_sd = apply_high_noise_boost(
-            y, t_s, settle_s, final_value, band, wave_rng
+        # --- Shared noise policy for every generator ---
+        y, used_sd = add_signal_sample_noise(
+            y,
+            final_value,
+            wave_rng,
         )
-        if boost_sd > 0.0:
-            used_sd = max(used_sd, boost_sd)
+
+        # Slow tails are intentionally not flattened at the sampled shape time.
+        # Label the point where the generated tail is actually stable instead.
+        if gen_func is generate_slow_tail_biexponential:
+            measured_label_ms = estimate_slow_tail_label_ms(t_ms, y, used_sd)
+            settle_time_ms = max(settle_time_ms, measured_label_ms)
+            settle_s = settle_time_ms / 1000.0
 
         # --- Compute post-settle limits ---
         si = int(np.searchsorted(t_s, settle_s))
