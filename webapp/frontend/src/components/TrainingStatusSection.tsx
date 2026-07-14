@@ -59,12 +59,14 @@ export default function TrainingStatusSection({
   const artifactCount = plotArtifacts.length + resultArtifacts.length;
   const waveformItems = trainJob?.result?.analysis_manifest ?? [];
   const waveformTotal = trainJob?.result?.total_waves ?? waveformItems.length;
-  const displayedWaveforms = [...waveformItems].sort((a: any, b: any) => {
-    const numA = parseInt(String(a.wave_id ?? '').replace(/\D/g, ''), 10);
-    const numB = parseInt(String(b.wave_id ?? '').replace(/\D/g, ''), 10);
-    if (!Number.isNaN(numA) && !Number.isNaN(numB)) return numA - numB;
-    return String(a.wave_id ?? '').localeCompare(String(b.wave_id ?? ''));
-  });
+  const displayedWaveforms = [...waveformItems]
+    .sort((a: any, b: any) => {
+      const numA = parseInt(String(a.wave_id ?? '').replace(/\D/g, ''), 10);
+      const numB = parseInt(String(b.wave_id ?? '').replace(/\D/g, ''), 10);
+      if (!Number.isNaN(numA) && !Number.isNaN(numB)) return numA - numB;
+      return String(a.wave_id ?? '').localeCompare(String(b.wave_id ?? ''));
+    })
+    .slice(0, 10);
   const formatWaveMetric = (value: any) => {
     const numeric = Number(value);
     return Number.isFinite(numeric) ? numeric.toFixed(6) : '--';
