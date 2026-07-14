@@ -94,6 +94,51 @@ cd webapp\backend
 python run.py
 ```
 
+## GPU and Machine Migration
+
+Do not assume that a machine can train with CUDA only because Windows detects
+an NVIDIA GPU or because `torch.cuda.is_available()` returns `True`. The
+installed PyTorch wheel must also contain kernels for that GPU's compute
+capability.
+
+After creating or moving a virtual environment to another machine, verify the
+actual PyTorch build, CUDA runtime, supported architectures, and a real GPU
+operation before starting a web training job:
+
+```powershell
+python -c "import torch; print('torch:', torch.__version__); print('cuda:', torch.version.cuda); print('gpu:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'); print('arch:', torch.cuda.get_arch_list()); print('test:', (torch.ones(1, device='cuda') * 2).item())"
+```
+
+The final value must print `2.0` without a CUDA compatibility warning. A result
+such as `CUDA error: no kernel image is available for execution on the device`
+means that PyTorch sees the GPU but the installed wheel does not support its
+architecture.
+
+Important compatibility notes:
+
+- The repository currently pins `torch==2.3.1` from the CUDA 12.1 wheel index.
+- NVIDIA Blackwell GPUs such as compute capability `sm_120` require PyTorch
+  2.7 or newer with a CUDA 12.8-or-newer wheel. The current CUDA 12.1 wheel is
+  not compatible with those GPUs.
+- For a Blackwell Windows/Python 3.11 environment, one known compatible setup
+  is:
+
+```powershell
+python -m pip uninstall -y torch torchvision torchaudio
+python -m pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
+```
+
+- Re-run the GPU operation test after installation. Do not start training until
+  it passes.
+- When changing the project's standard PyTorch version, update
+  `requirements.txt` at the same time; otherwise a later
+  `pip install -r requirements.txt` may downgrade PyTorch to the incompatible
+  CUDA 12.1 build again.
+- Use the official PyTorch installation selector for other GPU generations and
+  operating systems instead of copying the Blackwell command blindly.
+- The TCN training script selects `cuda` automatically after CUDA passes these
+  checks. AutoGluon Tabular may still use CPU for many of its model families.
+
 ## API Access Model
 
 Public:
