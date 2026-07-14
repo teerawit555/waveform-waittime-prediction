@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from autogluon.tabular import TabularPredictor
+from autogluon.tabular.configs.hyperparameter_configs import get_hyperparameter_config
 
 
 TS = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -31,6 +32,38 @@ NON_FEATURE_COLS = {
     "is_fast",
     "is_zero",
 }
+
+
+PRESET_HYPERPARAMETER_CONFIGS = {
+    "best": "zeroshot",
+    "best_quality": "zeroshot",
+    "high": "zeroshot",
+    "high_quality": "zeroshot",
+    "good": "light",
+    "good_quality": "light",
+    "medium": "default",
+    "medium_quality": "default",
+    "medium_quality_faster_train": "default",
+}
+
+
+def build_hyperparameters_with_catboost_cpu(presets: str) -> tuple[dict[str, Any], int]:
+    """Keep the preset portfolio while forcing every CatBoost model onto CPU.
+
+    CatBoost GPU can terminate the entire Python process on some CUDA/GPU
+    combinations instead of raising a recoverable model-fit exception. Other
+    supported AutoGluon models can still use the GPU granted to predictor.fit.
+    """
+    config_name = PRESET_HYPERPARAMETER_CONFIGS.get(str(presets).strip().lower(), "default")
+    hyperparameters = get_hyperparameter_config(config_name)
+    catboost_configs = hyperparameters.get("CAT", [])
+    if isinstance(catboost_configs, dict):
+        catboost_configs = [catboost_configs]
+
+    for model_config in catboost_configs:
+        model_config.setdefault("ag_args_fit", {})["num_gpus"] = 0
+
+    return hyperparameters, len(catboost_configs)
 
 
 def parse_args() -> argparse.Namespace:
@@ -215,9 +248,16 @@ def main() -> None:
     )
 
     weighted_train = add_sample_weight(train_fit, args.label, args.weight_fast_ms, args.fast_weight)
+    hyperparameters, catboost_cpu_count = build_hyperparameters_with_catboost_cpu(args.presets)
+    log(
+        f"CatBoost GPU disabled for {catboost_cpu_count} config(s); "
+        "other supported AutoGluon models may still use GPU.",
+        log_path,
+    )
     fit_kwargs: dict[str, Any] = {
         "train_data": frame_for_autogluon(weighted_train, [*feature_cols, "sample_weight"], label_fit),
         "presets": args.presets,
+        "hyperparameters": hyperparameters,
         "time_limit": args.time_limit,
         "num_gpus": gpu_count,
         "dynamic_stacking": False,
