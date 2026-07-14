@@ -4,6 +4,9 @@ import argparse
 import math
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -114,6 +117,16 @@ def get_label_ms(wave: pd.DataFrame, label_col: str) -> float | None:
     return float(labels.iloc[0])
 
 
+def get_wave_title(wave: pd.DataFrame, wave_id: object) -> str:
+    title = f"wave_id={wave_id}"
+    if "type" not in wave.columns:
+        return title
+    types = wave["type"].dropna().astype(str)
+    if types.empty or not types.iloc[0]:
+        return title
+    return f"{title} | {types.iloc[0]}"
+
+
 def add_label_line(ax, label_ms: float | None, show_legend: bool = True) -> None:
     if label_ms is None:
         return
@@ -123,6 +136,23 @@ def add_label_line(ax, label_ms: float | None, show_legend: bool = True) -> None
         linestyle="--",
         linewidth=1.8,
         label=f"label = {label_ms:.4f} ms" if show_legend else None,
+    )
+
+    x_min, x_max = ax.get_xlim()
+    place_on_left = label_ms > (x_min + x_max) / 2
+    ax.annotate(
+        f"label = {label_ms:.3f} ms",
+        xy=(label_ms, 0.98),
+        xycoords=("data", "axes fraction"),
+        xytext=(-4 if place_on_left else 4, 0),
+        textcoords="offset points",
+        rotation=90,
+        rotation_mode="anchor",
+        ha="right",
+        va="center",
+        fontsize=8,
+        color="#B45309",
+        bbox={"boxstyle": "round,pad=0.18", "facecolor": "white", "edgecolor": "none", "alpha": 0.82},
     )
 
 
@@ -151,7 +181,7 @@ def plot_separate_waveform_files(
         add_label_line(ax, label_ms)
         ax.set_xlabel("time_ms")
         ax.set_ylabel("value")
-        ax.set_title(f"wave_id={wave_id_str}")
+        ax.set_title(get_wave_title(g, wave_id_str))
         ax.grid(True, alpha=0.28)
         ax.legend()
         fig.tight_layout()
@@ -201,7 +231,7 @@ def plot_waveform_pages(
             label_ms = get_label_ms(g, label_col) if show_label else None
             ax.plot(t, x, linewidth=1.2, color="#00528A")
             add_label_line(ax, label_ms, show_legend=False)
-            ax.set_title(f"wave_id={wave_id_str}", fontsize=11)
+            ax.set_title(get_wave_title(g, wave_id_str), fontsize=10)
             ax.set_xlabel("time_ms")
             ax.set_ylabel("value")
             ax.grid(True, alpha=0.28)
