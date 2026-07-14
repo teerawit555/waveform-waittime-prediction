@@ -39,6 +39,7 @@ export type ModelItem = {
   tcn_path: string;
   ag_path: string;
   ready: boolean;
+  trained_at?: number;
 };
 
 export type MlflowInfo = {
@@ -232,13 +233,18 @@ export type LeaderboardEntry = {
   fit_order: number;
 };
 
-export async function getModelLeaderboard(modelName: string, adminToken?: string): Promise<LeaderboardEntry[]> {
+export type ModelLeaderboardResponse = {
+  leaderboard: LeaderboardEntry[];
+  best_model: string | null;
+};
+
+export async function getModelLeaderboard(modelName: string, adminToken?: string): Promise<ModelLeaderboardResponse> {
   const res = await fetch(`${API_BASE}/models/${encodeURIComponent(modelName)}/leaderboard`, {
     headers: adminHeaders(adminToken),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? 'Failed to fetch leaderboard');
-  return data.leaderboard;
+  return data as ModelLeaderboardResponse;
 }
 
 export function toFileUrl(relativePath?: string | null) {
