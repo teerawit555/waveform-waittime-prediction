@@ -21,7 +21,6 @@ from .config import (
     ANALYSIS_DIR,
     AUTOGLUON_DIR,
     DATA_DIR,
-    DEFAULT_MODEL_NAME,
     IS_PRODUCTION,
     MLFLOW_REGISTERED_MODEL_NAME,
     MLFLOW_TRACKING_URI,
@@ -35,6 +34,7 @@ from .config import (
     TCN_DIR,
     TRAINING_ENABLED,
     UPLOAD_DIR,
+    resolve_default_model_name,
 )
 from .data_service import build_preview_from_file, save_uploaded_file
 from .job_queue import job_queue
@@ -427,11 +427,12 @@ def plot_wave_on_demand():
 @api.route("/models", methods=["GET"])
 def get_models():
     ready_models = [model for model in list_available_models() if model.get("ready")]
+    default_model = resolve_default_model_name()
     models = ready_models if is_admin_request() else [
-        model for model in ready_models if model.get("name") == DEFAULT_MODEL_NAME
+        model for model in ready_models if model.get("name") == default_model
     ]
     return jsonify({
-        "default_model": DEFAULT_MODEL_NAME,
+        "default_model": default_model,
         "models": models,
         "training_enabled": TRAINING_ENABLED,
     })
@@ -646,7 +647,7 @@ def delete_model(model_name: str):
     if not safe_model_name or safe_model_name != model_name:
         return jsonify({"error": "Invalid model name"}), 400
 
-    if safe_model_name == DEFAULT_MODEL_NAME:
+    if safe_model_name == resolve_default_model_name():
         return jsonify({"error": "Default model cannot be deleted"}), 400
 
     ag_dir = AUTOGLUON_DIR / safe_model_name
