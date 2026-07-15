@@ -167,19 +167,20 @@ function App() {
       
       const trainingEnabled = res.training_enabled !== undefined ? res.training_enabled : true;
       setIsTrainingEnabled(trainingEnabled);
+      const backendDefaultModel = res.default_model || DEFAULT_MODEL_NAME;
 
       const readyModels = (res.models || [])
         .filter((m) => m.ready && !shouldHideModel(m.name))
         .sort((a, b) => {
-          if (a.name === DEFAULT_MODEL_NAME) return -1;
-          if (b.name === DEFAULT_MODEL_NAME) return 1;
+          if (a.name === backendDefaultModel) return -1;
+          if (b.name === backendDefaultModel) return 1;
           return formatModelName(a.name).localeCompare(formatModelName(b.name));
         });
       setModels(readyModels);
 
       setSelectedModel((current) => {
         if (current && readyModels.some((model) => model.name === current)) return current;
-        return readyModels.find((model) => model.name === DEFAULT_MODEL_NAME)?.name ?? readyModels[0]?.name ?? '';
+        return readyModels.find((model) => model.name === backendDefaultModel)?.name ?? readyModels[0]?.name ?? '';
       });
 
       setSelectedTrainModel((current) => {
