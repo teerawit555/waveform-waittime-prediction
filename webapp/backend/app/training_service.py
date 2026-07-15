@@ -10,6 +10,7 @@ import shutil
 import pandas as pd
 import json
 import os
+import time
 
 from pathlib import Path
 from .config import (
@@ -87,6 +88,15 @@ def run_cmd(cmd: list[str]):
         check=True,
     )
     return result.stdout
+
+
+def run_timed_cmd(cmd: list[str], timings: dict[str, float], stage_name: str):
+    """Run one pipeline command and record its wall-clock duration."""
+    started_at = time.perf_counter()
+    try:
+        return run_cmd(cmd)
+    finally:
+        timings[stage_name] = round(time.perf_counter() - started_at, 4)
 
 
 def _is_relative_to(path: Path, base: Path) -> bool:
@@ -1190,6 +1200,7 @@ class PredictionService:
         ฟังก์ชันหลักสำหรับ run prediction pipeline ใน background thread
         อ่าน TCN path จาก model_meta.json ถ้ามี (fallback เป็น TCN_DIR/<model_name>)
         """
+        stage_timings: dict[str, float] = {}
         try:
             job_store.update(job_id, status="running", progress=5, message="Start prediction")
 
@@ -1234,76 +1245,78 @@ class PredictionService:
 
             # --- Step 1: Normalize uploaded signal table ---
             job_store.update(job_id, progress=10, message="Preparing prediction dataset...")
-            run_cmd([
+            run_timed_cmd([
                 sys.executable, str(SCRIPT_PATHS["convert_signal_csv"]),
                 "--in", str(dataset_path),
                 "--out", str(signal_csv),
-            ])
+            ], stage_timings, "prepare_data")
 
             # --- Step 2: Extract features ---
             job_store.update(job_id, progress=20, message="Extracting features...")
-            run_cmd([
+            run_timed_cmd([
                 sys.executable, str(SCRIPT_PATHS["extract_features"]),
                 "--mode", "pred",
                 "--in", str(signal_csv),
                 "--out", str(features_csv),
-            ])
+            ], stage_timings, "feature_extraction")
 
             # --- Step 3: Build waveform tensor ---
             job_store.update(job_id, progress=32, message="Building tensor...")
-            run_cmd([
+            run_timed_cmd([
                 sys.executable, str(SCRIPT_PATHS["make_wave_tensor"]),
                 "--in", str(signal_csv),
                 "--out", str(tensor_npz),
                 "--target-len", "1000",
-            ])
+            ], stage_timings, "tensor_build")
 
             # --- Step 4: Export TCN embeddings ---
             job_store.update(job_id, progress=48, message="Extracting embeddings...")
-            run_cmd([
+            run_timed_cmd([
                 sys.executable, str(SCRIPT_PATHS["export_tcn_encoder"]),
                 "--model", str(model_dir),
                 "--waves", str(tensor_npz),
                 "--out", str(embed_csv),
-            ])
+            ], stage_timings, "tcn_embedding")
 
             # --- Step 5: Merge features + embeddings ---
             job_store.update(job_id, progress=64, message="Merging features...")
-            run_cmd([
+            run_timed_cmd([
                 sys.executable, str(SCRIPT_PATHS["merge_features_and_embeddings"]),
                 "--features", str(features_csv),
                 "--embeddings", str(embed_csv),
                 "--out", str(hybrid_csv),
-            ])
+            ], stage_timings, "feature_merge")
 
             # --- Step 6: Run AutoGluon inference ---
             job_store.update(job_id, progress=78, message="Running prediction...")
-            run_cmd([
+            run_timed_cmd([
                 sys.executable, str(SCRIPT_PATHS["predict_ag_1stage"]),
                 "--model-path", str(ag_model_dir),
                 "--in", str(hybrid_csv),
                 "--out", str(pred_csv),
-            ])
+            ], stage_timings, "model_prediction")
 
             # --- Step 6: Plot waveforms พร้อม annotation ผล predict ---
             job_store.update(job_id, progress=90, message="Generating waveform plots...")
-            run_cmd([
+            run_timed_cmd([
                 sys.executable, str(SCRIPT_PATHS["plot_pred_on_waveforms"]),
                 "--raw",    str(signal_csv),
                 "--pred",   str(pred_csv),
                 "--outdir", str(plot_dir),
                 "--topk",   "30",    # plot 30 waveforms แรก
                 "--mode",   "first",
-            ])
+            ], stage_timings, "plot_generation")
 
             # สร้าง preview และ manifest สำหรับ frontend
             preview_predictions = []
             analysis_manifest   = []
 
+            result_started_at = time.perf_counter()
             if pred_csv.exists():
                 pred_df             = pd.read_csv(pred_csv)
                 preview_predictions = pred_df.head(20).fillna("").to_dict(orient="records")
                 analysis_manifest   = build_analysis_manifest(pred_csv, plot_dir, job_id, "plots")
+            stage_timings["result_assembly"] = round(time.perf_counter() - result_started_at, 4)
 
             job_store.update(
                 job_id,
@@ -1319,6 +1332,8 @@ class PredictionService:
                     "preview_predictions": preview_predictions,    # 20 แถวแรกสำหรับ preview
                     "analysis_manifest":   analysis_manifest,      # waveform + pred สำหรับ gallery
                     "analysis_images":     list_pngs(plot_dir, job_id, "plots"),
+                    "stage_timings":       stage_timings,
+                    "measured_pipeline_seconds": round(sum(stage_timings.values()), 4),
                 },
             )
 

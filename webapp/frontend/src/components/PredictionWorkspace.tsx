@@ -1,8 +1,9 @@
 import { ChangeEvent, useMemo, useState } from 'react';
-import { Activity, BrainCircuit, CheckCircle2, ChevronDown, Copy, Download, FileUp, Gauge, PlayCircle } from 'lucide-react';
+import { Activity, BrainCircuit, CheckCircle2, ChevronDown, Copy, Download, FileUp, Gauge, PlayCircle, TimerReset } from 'lucide-react';
 import { API_BASE, ModelItem, toFileUrl, UploadResponse } from '../lib/api';
 import { formatModelName, getModelNote } from '../lib/modelDisplay';
 import DataTable from './DataTable';
+import { formatJobDuration, useFormattedJobRuntime } from './JobRuntime';
 import ProgressBar from './ProgressBar';
 
 type PredictionWorkspaceProps = {
@@ -19,6 +20,17 @@ type PredictionWorkspaceProps = {
 };
 
 type ApiExampleTab = 'request' | 'response';
+
+const PREDICTION_STAGE_LABELS: [string, string][] = [
+  ['prepare_data', 'Prepare Data'],
+  ['feature_extraction', 'Feature Extraction'],
+  ['tensor_build', 'Tensor Build'],
+  ['tcn_embedding', 'TCN Embedding'],
+  ['feature_merge', 'Feature Merge'],
+  ['model_prediction', 'Model Prediction'],
+  ['plot_generation', 'Plot Generation'],
+  ['result_assembly', 'Result Assembly'],
+];
 
 function highlightCodeValue(value: string) {
   const pieces: JSX.Element[] = [];
@@ -119,6 +131,7 @@ export default function PredictionWorkspace({
   const uploadedColumns = predictUpload?.shape?.[1] ?? null;
   const jobStatus = predictJob?.status ?? 'ready';
   const isJobRunning = predictJob && !['completed', 'failed'].includes(predictJob.status);
+  const formattedRuntime = useFormattedJobRuntime(predictJob);
   const hasResults = predictPreview.length > 0 || Boolean(predictJob?.result?.predictions_csv);
   const predictionEndpoint = `${API_BASE}/predict`;
   const requestExample = `POST ${predictionEndpoint}
@@ -175,6 +188,19 @@ Content-Type: application/json
       count: values.length,
     };
   }, [predictPreview]);
+  const predictionTimingItems = useMemo(() => {
+    const timings = predictJob?.result?.stage_timings ?? {};
+    return PREDICTION_STAGE_LABELS.flatMap(([key, label]) => {
+      const seconds = Number(timings[key]);
+      return Number.isFinite(seconds) ? [{ key, label, seconds }] : [];
+    });
+  }, [predictJob?.result?.stage_timings]);
+  const measuredPipelineSeconds = predictJob?.result?.measured_pipeline_seconds == null
+    ? Number.NaN
+    : Number(predictJob.result.measured_pipeline_seconds);
+  const totalJobSeconds = predictJob?.elapsed_seconds == null
+    ? Number.NaN
+    : Number(predictJob.elapsed_seconds);
   const formatMetric = (value: number | null) => (
     value == null ? 'N/A' : value.toLocaleString(undefined, { maximumFractionDigits: 4 })
   );
@@ -281,11 +307,13 @@ Content-Type: application/json
                 <span>{isJobRunning ? 'Running Prediction' : 'Run Prediction'}</span>
               </button>
               {predictJob ? (
-                <ProgressBar
-                  className="top-gap"
-                  progress={predictJob.progress ?? 0}
-                  message={predictJob.message}
-                />
+                <>
+                  <ProgressBar
+                    className="top-gap"
+                    progress={predictJob.progress ?? 0}
+                    message={[predictJob.message, formattedRuntime].filter(Boolean).join(' ')}
+                  />
+                </>
               ) : null}
               {predictJob?.result?.predictions_csv ? (
                 <a className="ghost-btn" href={toFileUrl(predictJob.result.predictions_csv)} target="_blank" rel="noreferrer">
@@ -395,6 +423,32 @@ Content-Type: application/json
                   <strong>{predictionStats.count.toLocaleString()}</strong>
                 </div>
               </div>
+              {predictionTimingItems.length ? (
+                <div className="prediction-timing-panel">
+                  <div className="prediction-timing-head">
+                    <div>
+                      <TimerReset size={17} />
+                      <span>Pipeline Runtime Breakdown</span>
+                    </div>
+                    <div className="prediction-timing-totals">
+                      {Number.isFinite(measuredPipelineSeconds) ? (
+                        <span>Stages <strong>{formatJobDuration(measuredPipelineSeconds)}</strong></span>
+                      ) : null}
+                      {Number.isFinite(totalJobSeconds) ? (
+                        <span>Total job <strong>{formatJobDuration(totalJobSeconds)}</strong></span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="prediction-timing-grid">
+                    {predictionTimingItems.map((stage) => (
+                      <div key={stage.key}>
+                        <span>{stage.label}</span>
+                        <strong>{formatJobDuration(stage.seconds)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="prediction-insight-note">
                 <Gauge size={16} />
                 <span>

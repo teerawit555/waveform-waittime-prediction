@@ -32,6 +32,10 @@ export type JobResponse = {
   message: string;
   result?: any;
   error?: string | null;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  elapsed_seconds?: number | null;
 };
 
 export type ModelItem = {

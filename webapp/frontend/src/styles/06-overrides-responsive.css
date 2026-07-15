@@ -24,11 +24,7 @@ body::before {
 }
 
 body {
-  background:
-    linear-gradient(90deg, rgba(0,58,112,.035) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(0,58,112,.03) 1px, transparent 1px),
-    linear-gradient(180deg, #fbfdff 0%, #f5f8fc 44%, #eef4f8 100%);
-  background-size: 56px 56px, 56px 56px, auto;
+  background: linear-gradient(180deg, #fbfdff 0%, #f5f8fc 44%, #eef4f8 100%);
   color: var(--ink);
 }
 
@@ -372,12 +368,7 @@ thead th {
 }
 
 .landing-hero::after {
-  background-image:
-    linear-gradient(90deg, rgba(0,58,112,.045) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(0,58,112,.04) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: linear-gradient(90deg, transparent 0%, #000 46%, #000 100%);
-  opacity: .5;
+  display: none;
 }
 
 .landing-hero h2 {

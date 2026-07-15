@@ -1,4 +1,6 @@
-import { Search, Waves, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Search, Waves, X, ZoomIn } from 'lucide-react';
 import { toFileUrl } from '../lib/api';
 
 type WaveformGalleryProps = {
@@ -30,6 +32,36 @@ export default function WaveformGallery({
   clearSearch,
   clearSearchError,
 }: WaveformGalleryProps) {
+  const [expandedItem, setExpandedItem] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (!expandedItem) return undefined;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpandedItem(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [expandedItem]);
+
+  const renderExpandableImage = (item: any) => (
+    <button
+      type="button"
+      className="analysis-image-button"
+      onClick={() => setExpandedItem(item)}
+      aria-label={`Enlarge waveform ${item.wave_id}`}
+    >
+      <img src={toFileUrl(item.image)} alt={item.wave_id} />
+      <span className="analysis-zoom-hint"><ZoomIn size={15} /> Enlarge</span>
+    </button>
+  );
+
   return (
     <section className="card waveform-gallery-card">
       <div className="section-header">
@@ -89,7 +121,7 @@ export default function WaveformGallery({
           </div>
           <div className="analysis-grid search-result-grid">
             <div className="analysis-card">
-              <img src={toFileUrl(searchedItem.image)} alt={searchedItem.wave_id} />
+              {renderExpandableImage(searchedItem)}
               <div className="analysis-meta">
                 <strong>{searchedItem.wave_id}</strong>
                 <span>Pred: {Number(searchedItem.pred ?? 0).toFixed(6)}</span>
@@ -114,7 +146,7 @@ export default function WaveformGallery({
         ) : (
           displayedAnalysis.map((item: any) => (
             <div className="analysis-card" key={`${item.wave_id}-${item.image}`}>
-              <img src={toFileUrl(item.image)} alt={item.wave_id} />
+              {renderExpandableImage(item)}
               <div className="analysis-meta">
                 <strong>{item.wave_id}</strong>
                 <span>Pred: {Number(item.pred ?? 0).toFixed(6)}</span>
@@ -126,6 +158,36 @@ export default function WaveformGallery({
           ))
         )}
       </div>
+
+      {expandedItem ? createPortal(
+        <div
+          className="waveform-lightbox"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Waveform ${expandedItem.wave_id}`}
+          onClick={() => setExpandedItem(null)}
+        >
+          <div className="waveform-lightbox-panel" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              className="waveform-lightbox-close"
+              onClick={() => setExpandedItem(null)}
+              aria-label="Close enlarged waveform"
+            >
+              <X size={20} />
+            </button>
+            <img src={toFileUrl(expandedItem.image)} alt={expandedItem.wave_id} />
+            <div className="waveform-lightbox-meta">
+              <strong>{expandedItem.wave_id}</strong>
+              <span>Pred: {Number(expandedItem.pred ?? 0).toFixed(6)}</span>
+              {expandedItem.true != null ? (
+                <span>True: {Number(expandedItem.true).toFixed(6)}</span>
+              ) : null}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      ) : null}
     </section>
   );
 }

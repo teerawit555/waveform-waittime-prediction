@@ -621,6 +621,129 @@ tbody td {
   border-bottom: 1px solid var(--gray-100);
 }
 
+.analysis-image-button {
+  position: relative;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: zoom-in;
+}
+
+.analysis-image-button:focus-visible {
+  outline: 3px solid rgba(0, 145, 220, .45);
+  outline-offset: -3px;
+}
+
+.analysis-zoom-hint {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  color: #fff;
+  background: rgba(5, 37, 69, .82);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: .62rem;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity var(--transition), transform var(--transition);
+}
+
+.analysis-image-button:hover .analysis-zoom-hint,
+.analysis-image-button:focus-visible .analysis-zoom-hint {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.waveform-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgba(4, 20, 38, .78);
+  backdrop-filter: blur(8px);
+  cursor: zoom-out;
+}
+
+.waveform-lightbox-panel {
+  position: relative;
+  width: min(94vw, 1400px);
+  max-height: 94vh;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, .35);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 28px 80px rgba(0, 16, 35, .38);
+  cursor: default;
+}
+
+.waveform-lightbox-panel > img {
+  display: block;
+  width: 100%;
+  max-height: calc(94vh - 66px);
+  object-fit: contain;
+  background: #fff;
+}
+
+.waveform-lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  color: #fff;
+  background: rgba(5, 37, 69, .88);
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.waveform-lightbox-close:hover {
+  background: var(--blue);
+}
+
+.waveform-lightbox-meta {
+  min-height: 66px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 20px;
+  font-family: var(--font-mono);
+  color: var(--gray-600);
+}
+
+.waveform-lightbox-meta strong {
+  color: var(--navy-deep);
+  font-size: .9rem;
+}
+
+@media (max-width: 640px) {
+  .waveform-lightbox {
+    padding: 12px;
+  }
+
+  .waveform-lightbox-panel {
+    width: 100%;
+  }
+
+  .waveform-lightbox-meta {
+    flex-wrap: wrap;
+    gap: 6px 14px;
+  }
+}
+
 .analysis-meta {
   padding: 10px 12px;
   display: flex;
@@ -789,4 +912,3 @@ tbody td {
   margin-bottom: 20px;
   font-family: var(--font-mono);
 }
-

@@ -109,12 +109,12 @@ function App() {
   const [earlyStoppingPatience, setEarlyStoppingPatience] = useState(5);
   const [trainingPreset, setTrainingPreset] = useState<TrainingPresetKey>('balanced');
   const [trainJobId, setTrainJobId] = useState<string | null>(
-    () => localStorage.getItem('trainJobId'));
+    () => localStorage.getItem('trainJobId') || localStorage.getItem('lastTrainJobId'));
   const [trainJob, setTrainJob] = useState<any>(null);
   const [predictFile, setPredictFile] = useState<File | null>(null);
   const [predictUpload, setPredictUpload] = useState<UploadResponse | null>(null);
   const [predictJobId, setPredictJobId] = useState<string | null>(
-    () => localStorage.getItem('predictJobId'));
+    () => localStorage.getItem('predictJobId') || localStorage.getItem('lastPredictJobId'));
   const [predictJob, setPredictJob] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('neurosettleAdminToken') || '');
@@ -451,6 +451,7 @@ useEffect(() => {
         setError(null);
         if (isTerminalJob(job)) {
           if (interval) window.clearInterval(interval);
+          localStorage.setItem('lastTrainJobId', job.job_id);
           setTrainJobId(null);
           localStorage.removeItem('trainJobId');
         }
@@ -482,6 +483,7 @@ useEffect(() => {
         setError(null);
         if (isTerminalJob(job)) {
           if (interval) window.clearInterval(interval);
+          localStorage.setItem('lastPredictJobId', job.job_id);
           setPredictJobId(null);
           localStorage.removeItem('predictJobId');
         }
@@ -566,12 +568,14 @@ useEffect(() => {
         existing_tcn_name: trainNewTCN ? null : selectedTCNModel,
       }, adminToken);
 
+      localStorage.removeItem('lastTrainJobId');
       setTrainJob({
         job_id: res.job_id,
         job_type: 'train',
         status: 'queued',
         progress: 0,
         message: 'Queued training job...',
+        created_at: new Date().toISOString(),
       });
       setTrainJobId(res.job_id);
     } catch (err: any) {
@@ -600,6 +604,7 @@ useEffect(() => {
       setError(null);
       setPredictJob(null);
       setPredictJobId(null);
+      localStorage.removeItem('lastPredictJobId');
       setGallerySearch('');
       setSearchedItem(null);
       setPredictFile(file);
@@ -628,6 +633,15 @@ useEffect(() => {
         model_name: selectedModel,
       });
 
+      localStorage.removeItem('lastPredictJobId');
+      setPredictJob({
+        job_id: res.job_id,
+        job_type: 'predict',
+        status: 'queued',
+        progress: 0,
+        message: 'Queued prediction job...',
+        created_at: new Date().toISOString(),
+      });
       setPredictJobId(res.job_id);
     } catch (err: any) {
       setError(err.message);

@@ -16,6 +16,7 @@ import {
 } from 'recharts';
 import { MlflowInfo, toFileUrl } from '../lib/api';
 import MlflowStatusPanel from './MlflowStatusPanel';
+import JobRuntime from './JobRuntime';
 import OverfittingCard from './OverfittingCard';
 import PlotCard from './PlotCard';
 import ProgressBar from './ProgressBar';
@@ -99,6 +100,7 @@ export default function TrainingStatusSection({
                 <span className={`status-pill status-${runStatus}`}>{runStatus}</span>
               </div>
               <ProgressBar progress={trainJob.progress ?? 0} />
+              <JobRuntime job={trainJob} label="Training runtime" />
             </div>
             <MlflowStatusPanel info={mlflowInfo} mode="current" />
           </div>
