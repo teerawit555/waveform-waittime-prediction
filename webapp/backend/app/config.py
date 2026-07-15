@@ -25,8 +25,52 @@ MLFLOW_EXPERIMENT_NAME = os.getenv("MLFLOW_EXPERIMENT_NAME", "adaptive-wait-time
 MLFLOW_LOG_MODEL_DIRS = os.getenv("MLFLOW_LOG_MODEL_DIRS", "0").lower() in {"1", "true", "yes", "on"}
 MLFLOW_REGISTERED_MODEL_NAME = os.getenv("MLFLOW_REGISTERED_MODEL_NAME", "adaptive_wait_time_hybrid")
 ADMIN_TOKEN = os.getenv("NEUROSETTLE_ADMIN_TOKEN") or os.getenv("ADMIN_TOKEN")
-DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "Aug_best_old_data_v1")
+DEFAULT_MODEL_NAME = os.getenv("DEFAULT_MODEL_NAME", "TCN_aug_weighted_v1")
 JOB_WORKERS = int(os.getenv("JOB_WORKERS", "1"))
+
+
+def resolve_default_model_name() -> str:
+    """Return the configured model when ready, otherwise the newest ready model."""
+    import json
+
+    def ready_model_timestamp(model_name: str) -> float | None:
+        ag_dir = AUTOGLUON_DIR / model_name
+        if not ag_dir.is_dir():
+            return None
+
+        tcn_dir = TCN_DIR / model_name
+        meta_file = ag_dir / "model_meta.json"
+        if meta_file.is_file():
+            try:
+                recorded_path = json.loads(meta_file.read_text(encoding="utf-8")).get("tcn_path")
+                recorded_tcn_dir = Path(recorded_path) if recorded_path else tcn_dir
+                if recorded_tcn_dir.is_dir():
+                    tcn_dir = recorded_tcn_dir
+            except (OSError, ValueError, TypeError):
+                pass
+
+        if not tcn_dir.is_dir():
+            return None
+
+        predictor_file = ag_dir / "predictor.pkl"
+        return (predictor_file if predictor_file.is_file() else ag_dir).stat().st_mtime
+
+    configured_name = DEFAULT_MODEL_NAME.strip()
+    if configured_name and ready_model_timestamp(configured_name) is not None:
+        return configured_name
+
+    ready_models: list[tuple[float, str]] = []
+    if AUTOGLUON_DIR.is_dir():
+        for ag_dir in AUTOGLUON_DIR.iterdir():
+            if not ag_dir.is_dir():
+                continue
+            trained_at = ready_model_timestamp(ag_dir.name)
+            if trained_at is not None:
+                ready_models.append((trained_at, ag_dir.name))
+
+    if ready_models:
+        return max(ready_models, key=lambda item: (item[0], item[1]))[1]
+    return configured_name
 
 NEUROSETTLE_ENV = os.getenv("NEUROSETTLE_ENV") or os.getenv("FLASK_ENV") or "development"
 IS_PRODUCTION = NEUROSETTLE_ENV.lower() in {"prod", "production"}
