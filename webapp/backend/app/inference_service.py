@@ -29,7 +29,7 @@ from autogluon.tabular import TabularPredictor
 from .config import (
     AUTOGLUON_DIR,
     TCN_DIR,
-    DEFAULT_MODEL_NAME,
+    resolve_default_model_name,
 )
 
 class InferenceService:
@@ -49,8 +49,9 @@ class InferenceService:
 
     def _prewarm_default_model(self) -> None:
         try:
-            self._get_models(DEFAULT_MODEL_NAME)
-            print(f"[INFO] Successfully pre-warmed default model: {DEFAULT_MODEL_NAME}", file=sys.stderr)
+            model_name = resolve_default_model_name()
+            self._get_models(model_name)
+            print(f"[INFO] Successfully pre-warmed default model: {model_name}", file=sys.stderr)
         except Exception as e:
             print(f"[WARN] Failed to pre-warm default model: {e}", file=sys.stderr)
 
@@ -68,7 +69,7 @@ class InferenceService:
         return safe.strip("_")
 
     def _get_models(self, model_name: str) -> tuple[Any, Any, dict]:
-        model_name = self._sanitize_name(model_name or DEFAULT_MODEL_NAME)
+        model_name = self._sanitize_name(model_name or resolve_default_model_name())
         
         with self._lock:
             # Check cache first
@@ -122,7 +123,7 @@ class InferenceService:
             raise ValueError("waveform (list of floats) is required")
 
         dt_ms = float(payload.get("dt_ms", 0.01))
-        model_name = payload.get("model_name") or DEFAULT_MODEL_NAME
+        model_name = payload.get("model_name") or resolve_default_model_name()
 
         waveform = np.array([float(x) for x in waveform_raw], dtype=float)
         n_samples = len(waveform)
@@ -179,7 +180,7 @@ class InferenceService:
         X = df_clean[feature_cols]
 
         # 6. Predict
-        pred_fit = predictor.predict(X, model="LightGBM_BAG_L1")
+        pred_fit = predictor.predict(X)
         pred_fit = float(pred_fit.iloc[0])
         pred_ms = np.expm1(pred_fit) if bool(meta.get("log_target", False)) else pred_fit
         pred_ms = float(np.clip(pred_ms, 0.0, None))
@@ -200,7 +201,7 @@ class InferenceService:
             raise ValueError("waveforms (list of dicts containing wave_id and data) is required")
 
         dt_ms = float(payload.get("dt_ms", 0.01))
-        model_name = payload.get("model_name") or DEFAULT_MODEL_NAME
+        model_name = payload.get("model_name") or resolve_default_model_name()
 
         # 1. Load models (reused from cache)
         tcn_model, predictor, meta = self._get_models(model_name)
@@ -274,7 +275,7 @@ class InferenceService:
         X = df_clean[feature_cols]
 
         # 5. Predict
-        pred_fit = predictor.predict(X, model="LightGBM_BAG_L1").to_numpy()
+        pred_fit = predictor.predict(X).to_numpy()
         pred_ms = np.expm1(pred_fit) if bool(meta.get("log_target", False)) else pred_fit
         pred_ms = np.clip(pred_ms, 0.0, None)
 
