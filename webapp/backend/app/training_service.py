@@ -17,7 +17,6 @@ from .config import (
     ANALYSIS_DIR,
     AUTOGLUON_DIR,
     DATA_DIR,
-    DEFAULT_MODEL_NAME,
     DEFAULT_AG_PRESETS,
     DEFAULT_AG_TIME_LIMIT,
     DEFAULT_TCN_AUGMENT,
@@ -37,6 +36,7 @@ from .config import (
     SCRIPT_TCN_DIR,
     TCN_DIR,
     UPLOAD_DIR,
+    resolve_default_model_name,
 )
 from .job_store import job_store
 from .job_queue import job_queue
@@ -1225,7 +1225,7 @@ class PredictionService:
             pred_csv = result_dir / "pred_1stage_hybrid.csv"
 
             # ตรวจสอบชื่อโมเดลและ resolve path
-            model_name = sanitize_model_name(payload.get("model_name") or DEFAULT_MODEL_NAME)
+            model_name = sanitize_model_name(payload.get("model_name") or resolve_default_model_name())
             if not model_name:
                 raise Exception("model_name is required")
 
