@@ -113,8 +113,7 @@ function App() {
   const [trainJob, setTrainJob] = useState<any>(null);
   const [predictFile, setPredictFile] = useState<File | null>(null);
   const [predictUpload, setPredictUpload] = useState<UploadResponse | null>(null);
-  const [predictJobId, setPredictJobId] = useState<string | null>(
-    () => localStorage.getItem('predictJobId') || localStorage.getItem('lastPredictJobId'));
+  const [predictJobId, setPredictJobId] = useState<string | null>(null);
   const [predictJob, setPredictJob] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [adminToken, setAdminToken] = useState(() => localStorage.getItem('neurosettleAdminToken') || '');
@@ -483,9 +482,7 @@ useEffect(() => {
         setError(null);
         if (isTerminalJob(job)) {
           if (interval) window.clearInterval(interval);
-          localStorage.setItem('lastPredictJobId', job.job_id);
           setPredictJobId(null);
-          localStorage.removeItem('predictJobId');
         }
       } catch (err: any) {
         if (!cancelled) {
@@ -508,9 +505,11 @@ useEffect(() => {
   }, [trainJobId]);
 
   useEffect(() => {
-    if (predictJobId) localStorage.setItem('predictJobId', predictJobId);
-    else localStorage.removeItem('predictJobId');
-  }, [predictJobId]);
+    // Prediction results are intentionally session-only. Refreshing the page
+    // must return the public workspace to a clean state.
+    localStorage.removeItem('predictJobId');
+    localStorage.removeItem('lastPredictJobId');
+  }, []);
 
   const startTraining = async () => {
     if (!isAdminUnlocked || !adminToken) {
