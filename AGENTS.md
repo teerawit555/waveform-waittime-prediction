@@ -1,229 +1,154 @@
 # AGENTS.md
 
-Guidance for coding agents working in this repository.
+Guidance for coding agents working in the NEUROSETTLE repository.
+
+## How Instructions Apply
+
+- This root file applies to the whole repository.
+- Before editing a directory, also read the nearest scoped `AGENTS.md`.
+- Scoped files add domain-specific rules; they do not replace the product and security rules here.
+- `README.md` is the operator guide. `docs/architecture.md` and `docs/decisions/` explain system structure and accepted decisions.
+- Keep one source of truth. Link to existing guidance instead of copying it into another agent file.
+
+Scoped guidance currently exists in:
+
+- `webapp/frontend/AGENTS.md`
+- `webapp/backend/AGENTS.md`
+- `scripts/AGENTS.md`
 
 ## Project Overview
 
-NEUROSETTLE is a machine-learning web application for waveform wait-time prediction.
+NEUROSETTLE predicts waveform settling wait time with a hybrid ML pipeline:
 
-The system has two main parts:
-
-- `webapp/frontend`: React + Vite + TypeScript UI.
-- `webapp/backend`: Flask API that runs upload, prediction, training, MLflow registry, and artifact endpoints.
-
-The ML pipeline combines:
-
-- waveform preprocessing
-- handcrafted feature extraction
+- waveform preprocessing and handcrafted features
 - TCN encoder embeddings
 - AutoGluon regression
-- optional MLflow tracking/model registry
+- optional MLflow tracking and registry metadata
 
-Prediction is intended to be public-facing. Training, model details, TCN model listing, and MLflow registry views are admin-only.
+Main applications:
 
-## Important Product Rules
+- `webapp/frontend`: React, Vite, and TypeScript
+- `webapp/backend`: Flask API and background jobs
+- `scripts`: data, feature, TCN, AutoGluon, and analysis CLIs
 
-- Keep the in-app ADI logo (`webapp/frontend/public/adi_logo.png`) as-is unless the user explicitly asks to change it.
-- NEUROSETTLE branding can be used for the browser title/favicon and project visuals.
-- The default prediction model is NS 1.3, backed by model name `TCN_aug_weighted_v1`.
-- Public users should primarily see and use Prediction.
-- Admin users can unlock Training, Models, and Workflow with `NEUROSETTLE_ADMIN_TOKEN`.
-- Do not expose model detail/registry endpoints publicly unless the user explicitly changes the product requirements.
+## Current Product Contract
 
-## Frontend Notes
+- Home, Prediction, and Workflow are public-facing views.
+- Training and Models are admin-only views.
+- Public users may list and select every ready prediction model through `GET /api/models`.
+- Model detail, leaderboard, deletion, audit, TCN listing, training, and MLflow registry operations remain admin-only.
+- The backend default is the configured ready model; if it is unavailable, the backend resolves the newest ready model.
+- Names ending in `vN`, such as `wave_model_v3`, display as `NS 1.(N-1)`, such as `NS 1.2`.
+- Explicit legacy mappings in `webapp/frontend/src/lib/modelDisplay.ts` take precedence over the sequential rule.
+- Keep `webapp/frontend/public/adi_logo.png` unchanged unless the user explicitly requests a brand change.
 
-Key files:
+Accepted decisions are recorded in:
 
-- `webapp/frontend/src/App.tsx`: main application state, view switching, admin unlock state, landing page, training and prediction orchestration.
-- `webapp/frontend/src/styles.css`: global visual system and page/component styling.
-- `webapp/frontend/src/lib/api.ts`: frontend API helpers.
-- `webapp/frontend/src/lib/modelDisplay.ts`: user-facing model labels such as NS 1.3.
-- `webapp/frontend/src/components/PredictionWorkspace.tsx`: prediction UI.
-- `webapp/frontend/src/components/ModelRegistrySection.tsx`: admin model registry UI.
-- `webapp/frontend/src/components/WorkflowSection.tsx`: ML workflow explanation UI.
+- `docs/decisions/001-model-version-naming.md`
+- `docs/decisions/002-public-admin-access.md`
 
-Frontend commands:
+## Repository Map
 
-```powershell
-cd webapp\frontend
-npm.cmd run build
-npm.cmd run dev
-```
+- `webapp/frontend/src/App.tsx`: application state, navigation, admin unlock, and orchestration
+- `webapp/frontend/src/lib/api.ts`: API client and `VITE_API_URL` handling
+- `webapp/frontend/src/lib/modelDisplay.ts`: model labels and ordering
+- `webapp/backend/run.py`: Flask application entrypoint
+- `webapp/backend/app/routes.py`: routes and access checks
+- `webapp/backend/app/config.py`: paths, `.env` loading, and runtime defaults
+- `webapp/backend/app/inference_service.py`: cached synchronous inference
+- `webapp/backend/app/training_service.py`: model discovery and training/prediction jobs
+- `models/`: local TCN and AutoGluon artifacts; ignored by Git
+- `mlruns/`: local MLflow state; ignored by Git
 
-Design expectations:
+## Environment And Secrets
 
-- Keep the theme in the ADI/NEUROSETTLE direction: white, navy, sky blue, precise engineering feel.
-- Prefer compact, premium product UI over marketing-heavy decoration.
-- Landing page should lead users into prediction and API usage.
-- Training should feel like an admin console, not a public user workflow.
-- Avoid oversized headers/navbars that push the hero too far down.
-- Use `lucide-react` icons when adding buttons or navigation items.
+- The backend loads the root `.env` through `python-dotenv`.
+- Existing shell variables take precedence over `.env` values.
+- Use `.env.example` for backend configuration and `webapp/frontend/.env.example` for public frontend configuration.
+- Never commit `.env`, credentials, tokens, model binaries, uploaded data, logs, or generated benchmark output.
+- Never expose `NEUROSETTLE_ADMIN_TOKEN` through a `VITE_*` variable; Vite values are bundled into browser JavaScript.
+- Production requires an admin token and disables training by default unless explicitly enabled.
 
-## Backend Notes
+## Common Commands
 
-Key files:
-
-- `webapp/backend/run.py`: Flask app factory and local server entrypoint.
-- `webapp/backend/app/routes.py`: API routes and admin checks.
-- `webapp/backend/app/config.py`: directory paths and environment-driven defaults.
-- `webapp/backend/app/training_service.py`: training and prediction job orchestration.
-- `webapp/backend/app/job_queue.py`: background job queue.
-- `webapp/backend/app/job_store.py`: job status/result store.
-- `webapp/backend/app/mlflow_service.py`: MLflow tracking/registry helpers.
-
-Important environment variables:
+Backend setup and run from the repository root:
 
 ```powershell
-$env:NEUROSETTLE_ADMIN_TOKEN="change-me"
-$env:DEFAULT_MODEL_NAME="TCN_aug_weighted_v1"
-$env:MLFLOW_TRACKING_URI="file:///path/to/mlruns"
-$env:MLFLOW_EXPERIMENT_NAME="adaptive-wait-time"
-$env:JOB_WORKERS="1"
-```
-
-Backend verification:
-
-```powershell
-python -m py_compile webapp\backend\app\config.py webapp\backend\app\routes.py webapp\backend\app\training_service.py
-```
-
-Local backend run:
-
-```powershell
+python -m pip install -r requirements.txt
 cd webapp\backend
 python run.py
 ```
 
-## GPU and Machine Migration
-
-Do not assume that a machine can train with CUDA only because Windows detects
-an NVIDIA GPU or because `torch.cuda.is_available()` returns `True`. The
-installed PyTorch wheel must also contain kernels for that GPU's compute
-capability.
-
-After creating or moving a virtual environment to another machine, verify the
-actual PyTorch build, CUDA runtime, supported architectures, and a real GPU
-operation before starting a web training job:
-
-```powershell
-python -c "import torch; print('torch:', torch.__version__); print('cuda:', torch.version.cuda); print('gpu:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'N/A'); print('arch:', torch.cuda.get_arch_list()); print('test:', (torch.ones(1, device='cuda') * 2).item())"
-```
-
-The final value must print `2.0` without a CUDA compatibility warning. A result
-such as `CUDA error: no kernel image is available for execution on the device`
-means that PyTorch sees the GPU but the installed wheel does not support its
-architecture.
-
-Important compatibility notes:
-
-- The repository currently pins `torch==2.3.1` from the CUDA 12.1 wheel index.
-- NVIDIA Blackwell GPUs such as compute capability `sm_120` require PyTorch
-  2.7 or newer with a CUDA 12.8-or-newer wheel. The current CUDA 12.1 wheel is
-  not compatible with those GPUs.
-- For a Blackwell Windows/Python 3.11 environment, one known compatible setup
-  is:
-
-```powershell
-python -m pip uninstall -y torch torchvision torchaudio
-python -m pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
-```
-
-- Re-run the GPU operation test after installation. Do not start training until
-  it passes.
-- When changing the project's standard PyTorch version, update
-  `requirements.txt` at the same time; otherwise a later
-  `pip install -r requirements.txt` may downgrade PyTorch to the incompatible
-  CUDA 12.1 build again.
-- Use the official PyTorch installation selector for other GPU generations and
-  operating systems instead of copying the Blackwell command blindly.
-- The TCN training script selects `cuda` automatically after CUDA passes these
-  checks. AutoGluon Tabular may still use CPU for many of its model families.
-
-## API Access Model
-
-Public:
-
-- `POST /api/upload`
-- `POST /api/predict`
-- `GET /api/jobs/<job_id>`
-- `GET /api/models`, but public output should be limited to the default NS 1.3 model.
-
-Admin-only:
-
-- `POST /api/train`
-- `GET /api/models/<model_name>`
-- `GET /api/tcn-models`
-- `GET /api/mlflow/model-registry`
-
-Admin token is accepted through:
-
-- `X-Admin-Token: <token>`
-- `Authorization: Bearer <token>`
-
-## Model Naming
-
-Internal model names can be technical, but UI labels should be human-readable.
-
-Current important mapping:
-
-- `TCN_aug_weighted_v1` -> `NS 1.3`
-- `test_ml_flow` -> `NS 1.2`
-- `wave_model_v_overfit_check` -> `NS 1.1`
-- `ag_1stage_hybrid_v1` -> `NS 1.0`
-- `tcn_v1` -> `NS 1.0 Encoder`
-
-Use `webapp/frontend/src/lib/modelDisplay.ts` for frontend labels and notes.
-
-## Repository Hygiene
-
-- The working tree may already contain user changes. Do not revert unrelated files.
-- Keep edits scoped to the user request.
-- Use `rg` or `rg --files` for searches.
-- Use `apply_patch` for manual code edits.
-- Do not commit unless the user explicitly asks.
-- Avoid writing generated logs into the repo. If temporary logs are created for preview/debugging, remove them before finishing.
-
-## Verification Checklist
-
-For frontend changes:
+Frontend setup and run:
 
 ```powershell
 cd webapp\frontend
-npm.cmd run build
+npm install
+npm run dev
 ```
 
-Then preview the UI if the change affects layout, routing, or interaction.
+Use `npm.cmd` only when PowerShell resolves `npm.ps1` and blocks it through execution policy.
 
-For backend changes:
+## Verification
+
+Backend syntax check:
 
 ```powershell
 python -m py_compile webapp\backend\app\config.py webapp\backend\app\routes.py webapp\backend\app\training_service.py
 ```
 
-For admin behavior changes, verify at least:
+Frontend build:
 
-- public `/api/models` returns only the default NS 1.3 model
-- admin `/api/models` returns all ready models
-- public registry/model-detail/TCN endpoints return `401`
-- `/api/train` requires admin token
+```powershell
+cd webapp\frontend
+npm run build
+```
 
-## Common Local Paths
+For access-control changes, verify at least:
 
-- Models: `models/`
-- TCN models: `models/TCNModels/`
-- AutoGluon models: `models/AutogluonModels/`
-- MLflow runs: `mlruns/`
-- Uploaded files: `webapp/backend/app/uploads/`
-- Prediction/training results: `webapp/backend/app/results/`
-- Plot artifacts: `webapp/backend/app/plots/`
-- Generated NEUROSETTLE logo assets: `webapp/frontend/public/neurosettle-logo.png`, `webapp/frontend/public/neurosettle-icon.png`
+- public `GET /api/models` returns all ready models
+- public model-detail, registry, and TCN endpoints return `401`
+- `POST /api/train` requires an admin token
+- valid admin headers unlock protected endpoints
 
-## Final Response Style
+Scale verification to the blast radius. Do not run full model training merely to validate a narrow UI or route change.
 
-When reporting work to the user:
+## Engineering Rules
 
-- Be concise.
-- Mention changed files.
-- Mention verification commands that passed.
-- Mention any blocker clearly.
-- The user often writes Thai, so Thai summaries are welcome.
+- Read the existing implementation before choosing an abstraction.
+- Keep edits scoped and preserve unrelated user changes in dirty worktrees.
+- Use `rg` or `rg --files` for searches and `apply_patch` for manual edits.
+- Prefer structured parsers and existing project helpers over ad hoc text processing.
+- Treat model artifacts and metadata as machine-local; recorded absolute paths may be stale after migration.
+- Do not expose additional model-detail or admin endpoints without an explicit product decision.
+- Do not commit or push unless the user explicitly asks.
+- Remove temporary build and test artifacts created during the task.
+
+## Multi-Agent Coordination
+
+The parent agent owns integration and assigns non-overlapping file ownership. A useful default split is:
+
+- Backend agent: routes, config, services, and backend tests
+- Frontend agent: UI, model display, API client, and frontend tests
+- Pipeline agent: scripts and artifact contracts
+- Verification agent: read-only builds, API checks, and regression review
+
+Subagents should not use committed Markdown files as a chat channel. Return a concise handoff to the parent agent with:
+
+```markdown
+Goal:
+Files owned:
+Assumptions:
+Changes made:
+Verification:
+Risks or open questions:
+```
+
+Do not assign two agents to edit the same file concurrently. Store durable architectural reasoning in `docs/decisions/`, not in temporary chat transcripts or task logs.
+
+## Final Response
+
+- Be concise and lead with the outcome.
+- Mention changed files and verification that passed.
+- State blockers and unverified behavior clearly.
+- Thai summaries are appropriate when the user writes in Thai.

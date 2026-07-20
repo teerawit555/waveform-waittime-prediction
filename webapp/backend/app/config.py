@@ -1,9 +1,13 @@
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BACKEND_DIR = Path(__file__).resolve().parent
 WEBAPP_DIR = BACKEND_DIR.parent.parent
 PROJECT_ROOT = WEBAPP_DIR.parent
+
+load_dotenv(PROJECT_ROOT / ".env")
 
 
 MODELS_DIR    = PROJECT_ROOT / "models"
@@ -74,6 +78,9 @@ def resolve_default_model_name() -> str:
 
 NEUROSETTLE_ENV = os.getenv("NEUROSETTLE_ENV") or os.getenv("FLASK_ENV") or "development"
 IS_PRODUCTION = NEUROSETTLE_ENV.lower() in {"prod", "production"}
+if IS_PRODUCTION and not ADMIN_TOKEN:
+    raise RuntimeError("NEUROSETTLE_ADMIN_TOKEN is required in production")
+
 TRAINING_ENABLED = os.getenv("ENABLE_TRAINING", "0" if IS_PRODUCTION else "1").lower() in {"1", "true", "yes", "on"}
 def _get_local_ip() -> str | None:
     import socket

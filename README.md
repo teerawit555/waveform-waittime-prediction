@@ -23,6 +23,27 @@ python --version
 pip install -r requirements.txt
 ```
 
+### Configure environment
+Copy the checked-in examples before starting the backend and frontend:
+
+```powershell
+Copy-Item .env.example .env
+Copy-Item webapp\frontend\.env.example webapp\frontend\.env.local
+```
+
+The backend automatically loads the root `.env`. Values already set in the shell take precedence. Set a long, random `NEUROSETTLE_ADMIN_TOKEN` before using the admin console. Production startup fails when this token is missing.
+
+For production, use at least:
+
+```dotenv
+NEUROSETTLE_ENV=production
+NEUROSETTLE_ADMIN_TOKEN=replace-with-a-long-random-token
+ENABLE_TRAINING=0
+FLASK_DEBUG=0
+```
+
+`VITE_*` values are bundled into frontend JavaScript. Never put the admin token or another secret in the frontend environment file. See `.env.example` for every supported backend setting.
+
 ### MLflow tracking
 Training jobs log to MLflow automatically when `mlflow` is installed.
 
