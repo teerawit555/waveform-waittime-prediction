@@ -29,6 +29,8 @@ const modelDisplayMap: Record<string, ModelDisplayInfo> = {
 };
 
 const hiddenModelNames = new Set(['noise', 'noise_split_web_v1']);
+const sequentialModelPattern = /(?:^|[_\s-])v(\d+)$/i;
+const modelLabelCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
 export function normalizeModelName(name?: string | null) {
   return String(name ?? '').replace(/\.[^.]+$/, '');
@@ -38,11 +40,22 @@ export function shouldHideModel(name?: string | null) {
   return hiddenModelNames.has(normalizeModelName(name));
 }
 
+export function getModelVersion(name?: string | null) {
+  const match = normalizeModelName(name).match(sequentialModelPattern);
+  if (!match) return null;
+
+  const version = Number.parseInt(match[1], 10);
+  return Number.isSafeInteger(version) && version > 0 ? version : null;
+}
+
 export function formatModelName(name?: string | null) {
   if (!name) return '';
   const normalized = normalizeModelName(name);
   const mapped = modelDisplayMap[normalized];
   if (mapped) return mapped.label;
+
+  const version = getModelVersion(normalized);
+  if (version !== null) return `NS 1.${version - 1}`;
 
   return normalized
     .replace(/[_-]+/g, ' ')
@@ -52,4 +65,15 @@ export function formatModelName(name?: string | null) {
 export function getModelNote(name?: string | null) {
   if (!name) return '';
   return modelDisplayMap[normalizeModelName(name)]?.note ?? '';
+}
+
+export function compareModelNames(a?: string | null, b?: string | null) {
+  const aVersion = getModelVersion(a);
+  const bVersion = getModelVersion(b);
+
+  if (aVersion !== null && bVersion !== null && aVersion !== bVersion) {
+    return aVersion - bVersion;
+  }
+
+  return modelLabelCollator.compare(formatModelName(a), formatModelName(b));
 }

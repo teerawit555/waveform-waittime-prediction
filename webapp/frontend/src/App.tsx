@@ -4,7 +4,7 @@ import { Activity, ArrowRight, BookOpen, BrainCircuit, CheckCircle2, Database, F
 import { deleteModel, getJob, getMlflowConfig, getMlflowModelRegistry, getModelAudit, getModels, startPredict, startTrain, uploadFile, UploadResponse, API_BASE, ModelItem, MlflowInfo, MlflowModelRegistry, MlflowModelVersion } from './lib/api';
 import StatCard from './components/StatCard';
 import DataTable from './components/DataTable';
-import { DEFAULT_MODEL_NAME, formatModelName, getModelNote, shouldHideModel } from './lib/modelDisplay';
+import { compareModelNames, DEFAULT_MODEL_NAME, formatModelName, getModelNote, shouldHideModel } from './lib/modelDisplay';
 import { HeroWaveformGraphic } from './components/HeroWaveformGraphic';
 
 const FeatureImportanceSection = lazy(() => import('./components/FeatureImportanceSection'));
@@ -171,11 +171,7 @@ function App() {
 
       const readyModels = (res.models || [])
         .filter((m) => m.ready && !shouldHideModel(m.name))
-        .sort((a, b) => {
-          if (a.name === backendDefaultModel) return -1;
-          if (b.name === backendDefaultModel) return 1;
-          return formatModelName(a.name).localeCompare(formatModelName(b.name));
-        });
+        .sort((a, b) => compareModelNames(a.name, b.name));
       setModels(readyModels);
 
       setSelectedModel((current) => {

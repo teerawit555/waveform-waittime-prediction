@@ -428,9 +428,7 @@ def plot_wave_on_demand():
 def get_models():
     ready_models = [model for model in list_available_models() if model.get("ready")]
     default_model = resolve_default_model_name()
-    models = ready_models if is_admin_request() else [
-        model for model in ready_models if model.get("name") == default_model
-    ]
+    models = ready_models
     return jsonify({
         "default_model": default_model,
         "models": models,
